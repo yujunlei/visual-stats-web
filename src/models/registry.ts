@@ -30,4 +30,16 @@ export const modelPlugins = [
   berTopicPlugin,
 ]
 
-export const getModelPlugin = (id: string) => modelPlugins.find((plugin) => plugin.id === id) ?? modelPlugins[0]
+export const getModelPlugin = (id: string) => {
+  const plugin = modelPlugins.find((entry) => entry.id === id)
+  if (!plugin) throw new Error(`Unknown model plugin id: ${id}`)
+  return plugin
+}
+
+const duplicateModelIds = modelPlugins
+  .map((plugin) => plugin.id)
+  .filter((id, index, ids) => ids.indexOf(id) !== index)
+
+if (duplicateModelIds.length > 0) {
+  throw new Error(`Duplicate model plugin id(s): ${Array.from(new Set(duplicateModelIds)).join(', ')}`)
+}

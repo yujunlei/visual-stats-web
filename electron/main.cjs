@@ -19,6 +19,88 @@ function writeLog(message) {
   }
 }
 
+const MAX_MODEL_ROWS = 50000
+const MAX_MODEL_COLUMNS = 500
+const MAX_JSON_PAYLOAD_BYTES = 12 * 1024 * 1024
+const ALLOWED_INSTALL_SCOPES = new Set(['lightweight', 'professional'])
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function assertPlainObject(value, label) {
+  if (!isPlainObject(value)) {
+    throw new Error(`${label} 格式无效。`)
+  }
+}
+
+function estimateJsonBytes(payload) {
+  return Buffer.byteLength(JSON.stringify(payload ?? {}), 'utf8')
+}
+
+function assertPayloadBudget(payload) {
+  const bytes = estimateJsonBytes(payload)
+  if (bytes > MAX_JSON_PAYLOAD_BYTES) {
+    throw new Error(`请求数据过大：${Math.round(bytes / 1024 / 1024)}MB，当前限制为 ${Math.round(MAX_JSON_PAYLOAD_BYTES / 1024 / 1024)}MB。`)
+  }
+}
+
+function sanitizeModelPayload(payload) {
+  assertPlainObject(payload, '模型请求')
+  assertPayloadBudget(payload)
+
+  const { taskId, modelId, rows, config, inference } = payload
+  if (typeof taskId !== 'string' || taskId.length === 0 || taskId.length > 120) {
+    throw new Error('taskId 无效。')
+  }
+  if (typeof modelId !== 'string' || !/^[\w.-]+$/.test(modelId)) {
+    throw new Error('modelId 无效。')
+  }
+  if (!Array.isArray(rows)) {
+    throw new Error('rows 必须是数组。')
+  }
+  if (rows.length > MAX_MODEL_ROWS) {
+    throw new Error(`数据行数超过限制：${rows.length} > ${MAX_MODEL_ROWS}。请先抽样或筛选后再运行专业模型。`)
+  }
+  assertPlainObject(config, '模型配置')
+  if (typeof config.target !== 'string') {
+    throw new Error('模型配置缺少 target。')
+  }
+  if (!Array.isArray(config.features)) {
+    throw new Error('模型配置缺少 features。')
+  }
+  if (config.features.length > MAX_MODEL_COLUMNS) {
+    throw new Error(`特征数量超过限制：${config.features.length} > ${MAX_MODEL_COLUMNS}。`)
+  }
+
+  return {
+    taskId,
+    modelId,
+    rows,
+    config: {
+      target: config.target,
+      features: config.features,
+      params: isPlainObject(config.params) ? config.params : {},
+    },
+    inference: isPlainObject(inference) ? inference : undefined,
+  }
+}
+
+function sanitizeEnvironmentPayload(payload) {
+  assertPlainObject(payload, '环境检测请求')
+  const { modelId } = payload
+  if (typeof modelId !== 'string' || !/^[\w.-]+$/.test(modelId)) {
+    throw new Error('modelId 无效。')
+  }
+  return { modelId }
+}
+
+function sanitizeInstallPayload(payload) {
+  const sanitized = sanitizeEnvironmentPayload(payload)
+  const scope = isPlainObject(payload) && ALLOWED_INSTALL_SCOPES.has(payload.scope) ? payload.scope : 'professional'
+  return { ...sanitized, scope }
+}
+
 function professionalBackendScriptPath() {
   return isDev
     ? path.join(app.getAppPath(), 'backend', 'professional_backend.py')
@@ -185,16 +267,19 @@ async function repairPythonRuntime() {
 
 function registerProfessionalBackend() {
   ipcMain.handle('professional-model:run', async (_event, payload) => {
-    writeLog(`professional-model model=${payload?.modelId || 'unknown'}`)
-    return runPythonBackend(payload)
+    const sanitizedPayload = sanitizeModelPayload(payload)
+    writeLog(`professional-model model=${sanitizedPayload.modelId} rows=${sanitizedPayload.rows.length}`)
+    return runPythonBackend(sanitizedPayload)
   })
   ipcMain.handle('professional-model:check-environment', async (_event, payload) => {
-    writeLog(`professional-env model=${payload?.modelId || 'unknown'}`)
-    return checkPythonEnvironment(payload)
+    const sanitizedPayload = sanitizeEnvironmentPayload(payload)
+    writeLog(`professional-env model=${sanitizedPayload.modelId}`)
+    return checkPythonEnvironment(sanitizedPayload)
   })
   ipcMain.handle('professional-model:install-dependencies', async (_event, payload) => {
-    writeLog(`professional-install model=${payload?.modelId || 'unknown'} scope=${payload?.scope || 'professional'}`)
-    return installPythonDependencies(payload)
+    const sanitizedPayload = sanitizeInstallPayload(payload)
+    writeLog(`professional-install model=${sanitizedPayload.modelId} scope=${sanitizedPayload.scope}`)
+    return installPythonDependencies(sanitizedPayload)
   })
   ipcMain.handle('professional-model:repair-python', async () => {
     writeLog('professional-repair-python')

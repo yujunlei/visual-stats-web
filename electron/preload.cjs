@@ -1,5 +1,36 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+const allowedChannels = {
+  runProfessionalModel: 'professional-model:run',
+  checkProfessionalEnvironment: 'professional-model:check-environment',
+  installProfessionalDependencies: 'professional-model:install-dependencies',
+  repairProfessionalPython: 'professional-model:repair-python',
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function assertModelIdPayload(payload) {
+  if (!isPlainObject(payload) || typeof payload.modelId !== 'string' || !/^[\w.-]+$/.test(payload.modelId)) {
+    throw new Error('Invalid model payload.')
+  }
+}
+
+function assertRunPayload(payload) {
+  assertModelIdPayload(payload)
+  if (typeof payload.taskId !== 'string' || !Array.isArray(payload.rows) || !isPlainObject(payload.config)) {
+    throw new Error('Invalid professional model run payload.')
+  }
+}
+
+function assertInstallPayload(payload) {
+  assertModelIdPayload(payload)
+  if (payload.scope !== 'lightweight' && payload.scope !== 'professional') {
+    throw new Error('Invalid install scope.')
+  }
+}
+
 contextBridge.exposeInMainWorld('visualStatsDesktop', {
   platform: process.platform,
   versions: {
@@ -7,15 +38,18 @@ contextBridge.exposeInMainWorld('visualStatsDesktop', {
     chrome: process.versions.chrome,
   },
   runProfessionalModel(payload) {
-    return ipcRenderer.invoke('professional-model:run', payload)
+    assertRunPayload(payload)
+    return ipcRenderer.invoke(allowedChannels.runProfessionalModel, payload)
   },
   checkProfessionalEnvironment(payload) {
-    return ipcRenderer.invoke('professional-model:check-environment', payload)
+    assertModelIdPayload(payload)
+    return ipcRenderer.invoke(allowedChannels.checkProfessionalEnvironment, payload)
   },
   installProfessionalDependencies(payload) {
-    return ipcRenderer.invoke('professional-model:install-dependencies', payload)
+    assertInstallPayload(payload)
+    return ipcRenderer.invoke(allowedChannels.installProfessionalDependencies, payload)
   },
   repairProfessionalPython() {
-    return ipcRenderer.invoke('professional-model:repair-python')
+    return ipcRenderer.invoke(allowedChannels.repairProfessionalPython)
   },
 })

@@ -32,10 +32,31 @@ export const profileRows = (rows: Row[], overrides: TypeOverrides = {}): Variabl
   const columns = Object.keys(rows[0] ?? {})
 
   return columns.map((name) => {
-    const values = rows.map((row) => row[name])
-    const numericValues = values.map(toNumber).filter((value): value is number => value !== null)
-    const missing = values.length - values.filter((value) => value !== null && value !== '').length
-    const unique = new Set(values.filter((value) => value !== null && value !== '')).size
+    const values: Row[string][] = []
+    const numericValues: number[] = []
+    const uniqueValues = new Set<Row[string]>()
+    let missing = 0
+    let min: number | undefined
+    let max: number | undefined
+
+    rows.forEach((row) => {
+      const value = row[name]
+      values.push(value)
+
+      if (value === null || value === '') {
+        missing += 1
+      } else {
+        uniqueValues.add(value)
+      }
+
+      const numericValue = toNumber(value)
+      if (numericValue !== null) {
+        numericValues.push(numericValue)
+        min = min === undefined ? numericValue : Math.min(min, numericValue)
+        max = max === undefined ? numericValue : Math.max(max, numericValue)
+      }
+    })
+
     const inferredType = inferType(values, numericValues, missing)
     const type = overrides[name] ?? inferredType
 
@@ -44,9 +65,9 @@ export const profileRows = (rows: Row[], overrides: TypeOverrides = {}): Variabl
       type,
       inferredType,
       missing,
-      unique,
-      min: numericValues.length > 0 ? Math.min(...numericValues) : undefined,
-      max: numericValues.length > 0 ? Math.max(...numericValues) : undefined,
+      unique: uniqueValues.size,
+      min,
+      max,
     }
   })
 }

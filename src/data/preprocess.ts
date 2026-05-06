@@ -32,6 +32,9 @@ const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0)
 const safeFeatureName = (feature: string, category: string) =>
   `${feature}=${category}`.replace(/\s+/g, '_').replace(/[^\w=.-]/g, '')
 
+const highCardinalityLevelLimit = 40
+const nearCompleteMissingRatio = 0.8
+
 export const prepareModelData = (
   rows: Row[],
   profiles: VariableProfile[],
@@ -43,8 +46,22 @@ export const prepareModelData = (
   const profileMap = new Map(profiles.map((profile) => [profile.name, profile]))
   const numericFeatures = config.features.filter((feature) => profileMap.get(feature)?.type === 'numeric')
   const categoricalFeatures = config.features.filter((feature) => profileMap.get(feature)?.type === 'category')
+  const preservedColumnSet = new Set(preserveColumns)
+  const protectedFeatureSet = new Set([config.target, ...preserveColumns].filter(Boolean))
+  const constantNumericFeatures = numericFeatures.filter((feature) => {
+    if (protectedFeatureSet.has(feature)) return false
+    const values = rows.map((row) => toNumber(row[feature])).filter((value): value is number => value !== null)
+    return values.length > 0 && new Set(values).size <= 1
+  })
+  const usableNumericFeatures = numericFeatures.filter((feature) => !constantNumericFeatures.includes(feature))
+  const highCardinalityCategoricalFeatures = categoricalFeatures.filter((feature) => {
+    const unique = profileMap.get(feature)?.unique ?? 0
+    return unique > highCardinalityLevelLimit
+  })
   const usableCategoricalFeatures =
-    supportsCategoricalFeatures && prepConfig.categoricalEncoding === 'one-hot' ? categoricalFeatures : []
+    supportsCategoricalFeatures && prepConfig.categoricalEncoding === 'one-hot'
+      ? categoricalFeatures.filter((feature) => !highCardinalityCategoricalFeatures.includes(feature))
+      : []
   const ignoredCategoricalFeatures = categoricalFeatures.filter((feature) => !usableCategoricalFeatures.includes(feature))
   const logs: RunLogEntry[] = [
     { level: 'info', message: `原始数据 ${rows.length} 行，目标变量 ${config.target || '无'}。` },
@@ -57,10 +74,34 @@ export const prepareModelData = (
     })
   }
 
+  if (constantNumericFeatures.length > 0) {
+    logs.push({
+      level: 'warning',
+      message: `已忽略无变化的常量数值变量：${constantNumericFeatures.join(', ')}。`,
+    })
+  }
+
+  if (highCardinalityCategoricalFeatures.length > 0) {
+    logs.push({
+      level: 'warning',
+      message: `已忽略高基数分类变量：${highCardinalityCategoricalFeatures.join(', ')}。如需使用，请先合并类别或手动降维。`,
+    })
+  }
+
+  profiles.forEach((profile) => {
+    const missingRatio = rows.length > 0 ? profile.missing / rows.length : 0
+    if (missingRatio >= nearCompleteMissingRatio && !preservedColumnSet.has(profile.name)) {
+      logs.push({
+        level: 'warning',
+        message: `${profile.name} 缺失率为 ${(missingRatio * 100).toFixed(1)}%，建模结果可能不稳定。`,
+      })
+    }
+  })
+
   const numericFillValues = new Map<string, number>()
 
   if (prepConfig.missingStrategy !== 'drop') {
-    numericFeatures.filter(Boolean).forEach((feature) => {
+    usableNumericFeatures.filter(Boolean).forEach((feature) => {
       const values = rows.map((row) => toNumber(row[feature])).filter((value): value is number => value !== null)
       if (values.length > 0) {
         numericFillValues.set(feature, prepConfig.missingStrategy === 'mean' ? mean(values) : median(values))
@@ -98,7 +139,7 @@ export const prepareModelData = (
     const levels = categoryLevels.get(feature) ?? []
     return levels.slice(1).map((level) => safeFeatureName(feature, level))
   })
-  const preparedFeatures = [...numericFeatures, ...encodedFeatureNames]
+  const preparedFeatures = [...usableNumericFeatures, ...encodedFeatureNames]
   let droppedRows = 0
 
   const preparedRows = rows.flatMap((row) => {
@@ -115,7 +156,7 @@ export const prepareModelData = (
       nextRow[column] = row[column] ?? null
     })
 
-    for (const feature of numericFeatures) {
+    for (const feature of usableNumericFeatures) {
       const value = toNumber(row[feature])
       const fillValue = numericFillValues.get(feature)
 
@@ -153,6 +194,13 @@ export const prepareModelData = (
 
   if (preparedFeatures.length !== config.features.length) {
     logs.push({ level: 'info', message: `模型实际使用 ${preparedFeatures.length} 个数值特征。` })
+  }
+
+  if (encodedFeatureNames.length > 0) {
+    logs.push({
+      level: 'info',
+      message: `分类变量已使用省略基准组的 one-hot 编码，以降低完全共线性风险。`,
+    })
   }
 
   if (preserveColumns.length > 0) {

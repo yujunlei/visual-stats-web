@@ -29,6 +29,15 @@ import { buildBaselinePublicationTable, buildCustomPublicationTable, publication
 import type { ColumnType, Row, TypeOverrides } from './data/types'
 import { getModelPlugin, modelPlugins } from './models/registry'
 import type { InferenceConfig, ModelConfig, ModelMetric, ModelParamValue, ModelPlugin, ModelResult, SpatialWeightsParam } from './models/types'
+import {
+  allModelCategory,
+  dataPreviewOverscanRows,
+  dataPreviewRowHeight,
+  dataPreviewVisibleRows,
+  layoutStorageKey,
+  modelUsageStorageKey,
+  snapshotStorageKey,
+} from './constants/workbench'
 import './App.css'
 
 const formatMetricValue = (metric: ModelMetric | undefined) => {
@@ -368,14 +377,6 @@ const emptyDataRoles: DataRoles = {
   timeField: '',
   groupFields: [],
 }
-
-const snapshotStorageKey = 'visual-stats-lab:snapshots'
-const layoutStorageKey = 'visual-stats-lab:layout'
-const modelUsageStorageKey = 'visual-stats-lab:model-usage'
-const dataPreviewRowHeight = 34
-const dataPreviewVisibleRows = 42
-const dataPreviewOverscanRows = 8
-const allModelCategory = '全部'
 
 type ParameterField = NonNullable<ModelPlugin['parameterSchema']>[number]
 type ParameterSectionId = 'fields' | 'estimation' | 'advanced'
