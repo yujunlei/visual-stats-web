@@ -15,7 +15,6 @@ import {
   Play,
   Save,
   Search,
-  Settings,
   SlidersHorizontal,
   Star,
   Table,
@@ -871,6 +870,7 @@ function App() {
   const [selectedExportItemIds, setSelectedExportItemIds] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState('')
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
   const [customPublicationConfig, setCustomPublicationConfig] = useState<CustomPublicationConfig>({
     title: '表 1：自定义回归结果',
     note: '注：稳健标准误；括号内为 t 值；* p<0.1，** p<0.05，*** p<0.01',
@@ -1208,6 +1208,26 @@ function App() {
         .slice(0, 5),
     [activeModel.id, modelUsage],
   )
+  const recommendedModels = useMemo(() => {
+    if (!hasDataset) return []
+    const hasPanel = dataRoles.idFields.length > 0 && Boolean(dataRoles.timeField)
+    const hasCategorical = profiles.some((p) => p.type === 'category')
+    const numericCount = profiles.filter((p) => p.type === 'numeric').length
+    const hasText = profiles.some((p) => p.type === 'text')
+    const recs: Array<{ id: string; reason: string }> = []
+
+    if (numericCount >= 2) recs.push({ id: 'linear-regression', reason: '数据含多个数值变量' })
+    if (numericCount >= 3) recs.push({ id: 'correlation-analysis', reason: '探索变量间线性关系' })
+    if (hasCategorical && numericCount >= 1) recs.push({ id: 'category-summary', reason: '按类别比较数值' })
+    if (hasCategorical) recs.push({ id: 'crosstab-chi-square', reason: '含分类变量可做关联检验' })
+    if (hasPanel) recs.push({ id: 'xtreg-fixed-effects', reason: '检测到面板结构' })
+    if (hasText) recs.push({ id: 'bertopic', reason: '含文本字段' })
+    if (numericCount >= 1) recs.push({ id: 'descriptive-statistics', reason: '快速概览数据分布' })
+
+    return recs
+      .filter((rec) => rec.id !== activeModel.id && modelPlugins.some((p) => p.id === rec.id))
+      .slice(0, 3)
+  }, [activeModel.id, dataRoles, hasDataset, profiles])
   const parameterSections = useMemo(() => {
     const schema = activeModel.parameterSchema ?? []
     return (Object.keys(parameterSectionMeta) as ParameterSectionId[])
@@ -1292,14 +1312,33 @@ function App() {
     const insights: string[] = []
     const mainTable = result.tables.find((table) => table.id === 'coefficients') ?? result.tables[0]
     const rSquared = extractMetricNumber(result, 'R-squared')
-    if (rSquared !== null) insights.push(`模型解释度 R-squared 为 ${formatNumber(rSquared, 3)}。`)
+    if (rSquared !== null) {
+      const quality = rSquared >= 0.7 ? '较强' : rSquared >= 0.4 ? '中等' : rSquared >= 0.15 ? '较弱' : '很弱'
+      insights.push(`模型解释力${quality}（R² = ${formatNumber(rSquared, 3)}），自变量整体能解释因变量约 ${formatNumber(rSquared * 100, 1)}% 的变异。`)
+    }
     const pValue = extractMetricNumber(result, 'p-value') ?? extractMetricNumber(result, 'Prob > F') ?? extractMetricNumber(result, 'Sobel p')
-    if (pValue !== null) insights.push(pValue < 0.05 ? `核心检验 p 值为 ${formatResultValue(pValue, 'pValue')}，达到常用 5% 显著性阈值。` : `核心检验 p 值为 ${formatResultValue(pValue, 'pValue')}，未达到常用 5% 显著性阈值。`)
-    if (mainTable?.rows.length) {
-      insights.push(`主结果表「${mainTable.title}」包含 ${mainTable.rows.length} 行结果，可进一步查看具体字段。`)
+    if (pValue !== null) {
+      const sigLevel = pValue < 0.001 ? '在 0.1% 水平高度显著' : pValue < 0.01 ? '在 1% 水平显著' : pValue < 0.05 ? '在 5% 水平显著' : pValue < 0.1 ? '在 10% 水平边际显著' : '未达到常用显著性阈值'
+      insights.push(`整体模型检验 ${sigLevel}（p = ${formatResultValue(pValue, 'pValue')}）。`)
+    }
+    const nObs = extractMetricNumber(result, 'N') ?? extractMetricNumber(result, 'Observations')
+    if (nObs !== null) {
+      insights.push(`共纳入 ${formatNumber(nObs, 0)} 个有效观测进入估计。`)
+    }
+    if (mainTable && mainTable.id === 'coefficients') {
+      const sigRows = mainTable.rows.filter((row) => {
+        const p = typeof row.pValue === 'number' ? row.pValue : 1
+        return p < 0.05
+      })
+      if (sigRows.length > 0) {
+        const names = sigRows.slice(0, 3).map((row) => `${row.term ?? row.variable ?? ''}`).filter(Boolean)
+        insights.push(`${sigRows.length} 个变量在 5% 水平显著${names.length > 0 ? `，包括 ${names.join('、')}` : ''}。`)
+      } else if (mainTable.rows.length > 0) {
+        insights.push('当前模型中没有变量在 5% 水平显著，建议检查变量选择或模型设定。')
+      }
     }
 
-    return insights.slice(0, 3)
+    return insights.slice(0, 4)
   }, [result])
   const nextAction = useMemo(() => {
     if (!hasDataset) return '下一步：导入 CSV 或 XLSX 数据。'
@@ -1310,6 +1349,56 @@ function App() {
     if (!result) return '参数已就绪，可以运行模型。'
     return '结果已生成，可以查看结果表、诊断信息或导出 CSV。'
   }, [dataRoles.groupFields.length, dataRoles.idFields.length, dataRoles.timeField, hasDataset, hasStaleResult, isModelRunning, result, runTask?.phase, validationErrors])
+  const workspaceMode = useMemo<'data' | 'model' | 'result' | 'report'>(() => {
+    if (!hasDataset) return 'data'
+    if (isExportModalOpen) return 'report'
+    if (result && !hasStaleResult && !isModelRunning) return 'result'
+    return 'model'
+  }, [hasDataset, hasStaleResult, isExportModalOpen, isModelRunning, result])
+  const leadInsight = resultInsights[0] ?? ''
+  const secondaryInsights = resultInsights.slice(1)
+  const visibleSummaryMetrics = result?.summary.slice(0, 4) ?? []
+  const roleSummary = [
+    dataRoles.idFields.length > 0 ? `ID ${summarizeFields(dataRoles.idFields)}` : '',
+    dataRoles.timeField ? `Time ${dataRoles.timeField}` : '',
+    dataRoles.groupFields.length > 0 ? `Group ${summarizeFields(dataRoles.groupFields)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const activeFormula = activeModel.getFormula(sanitizedConfig)
+  const selectedFeatureSummary =
+    selectedFeatures.length === 0
+      ? '尚未选择解释变量'
+      : selectedFeatures.length <= 3
+        ? selectedFeatures.join('、')
+        : `${selectedFeatures.slice(0, 3).join('、')} 等 ${selectedFeatures.length} 个变量`
+  const fieldReadinessSummary = activeModel.requiresTarget
+    ? `${activeModel.targetLabel}：${selectedTarget || '未设置'}`
+    : `${activeModel.featuresLabel}：${selectedFeatureSummary}`
+  const modelContextLead =
+    validationErrors.length > 0
+      ? validationErrors[0].message
+      : activeModel.requiresTarget
+        ? `${activeModel.targetLabel}已选为 ${selectedTarget || '未设置'}，${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
+        : `${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
+  const workspaceHeading =
+    workspaceMode === 'data'
+      ? '导入并整理数据'
+      : workspaceMode === 'model'
+        ? '配置并运行模型'
+        : workspaceMode === 'report'
+          ? '整理并导出结果'
+          : '阅读并解释结果'
+  const workspaceLead =
+    workspaceMode === 'data'
+      ? '先导入数据，再设置维度字段和变量角色。'
+      : workspaceMode === 'model'
+        ? '当前工作区聚焦模型设定，先确认变量和基础参数。'
+        : workspaceMode === 'report'
+          ? '选择导出内容和格式，整理本次建模输出。'
+          : '先读自然语言结论，再向下查看统计表和补充诊断。'
+  const primaryParameterSections = parameterSections.filter((section) => section.id !== 'advanced')
+  const advancedSchemaSections = parameterSections.filter((section) => section.id === 'advanced')
   const selectedSnapshotIdSet = useMemo(() => new Set(selectedSnapshotIds), [selectedSnapshotIds])
   const sortedSnapshots = useMemo(
     () =>
@@ -2458,17 +2547,13 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="topbar__brand">
           <span className="eyebrow">Visual Stats Lab</span>
-          <h1>可视化统计建模工作台</h1>
+          <h1>统计建模工作台</h1>
         </div>
         <div className="topbar__actions">
-          <button className="secondary-button" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
-            <Table size={16} />
-            查看数据表
-          </button>
-          <label className="icon-button" title="上传 CSV 或 XLSX">
-            <Upload size={17} />
+          <label className="icon-button" title="导入 CSV / XLSX">
+            <Upload size={16} />
             <input
               type="file"
               accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -2478,19 +2563,23 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
               }}
             />
           </label>
+          <button className="secondary-button is-subtle" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
+            <Table size={15} />
+            数据表
+          </button>
           <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasDataset || isModelRunning || validationErrors.length > 0}>
-            <Play size={16} />
+            <Play size={15} />
             {isModelRunning ? '运行中' : '运行模型'}
           </button>
         </div>
       </header>
 
-      <section className={`workspace ${isHistoryCollapsed ? 'is-history-collapsed' : ''}`}>
+      <section className={`workspace workspace--${workspaceMode} ${isHistoryCollapsed ? 'is-history-collapsed' : ''}`}>
         <aside className={`panel data-panel ${isHistoryCollapsed ? 'is-collapsed' : ''}`}>
           <div className="panel__header">
             <div>
-              <span className="panel__label">Workspace</span>
-              <h2>历史记录</h2>
+              <span className="panel__label">Project</span>
+              <h2>项目索引</h2>
             </div>
             <button
               className="snapshot-icon-button"
@@ -2503,56 +2592,38 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
           </div>
 
           <div className="history-panel-content">
-          <div className="dataset-card">
-            <span className="dataset-card__label">当前数据集</span>
-            <strong>{fileName || '尚未导入数据'}</strong>
-            <p>{hasDataset ? `${rows.length} 行 · ${profiles.length} 字段 · ${eligibleFeatureColumns.length} 个当前模型候选字段` : '导入 CSV 或 XLSX 后开始分析。'}</p>
-            {hasDataset ? (
-              <div className="role-summary">
-                <span title={summarizeFields(dataRoles.idFields)}>ID {summarizeFields(dataRoles.idFields)}</span>
-                <span title={dataRoles.timeField || '未设置'}>Time {dataRoles.timeField || '未设置'}</span>
-                <span title={summarizeFields(dataRoles.groupFields)}>Group {summarizeFields(dataRoles.groupFields)}</span>
+            <div className="dataset-card dataset-card--compact">
+              <span className="dataset-card__label">当前项目</span>
+              <strong>{fileName || '尚未导入数据'}</strong>
+              <p>{hasDataset ? `${rows.length} 行 · ${profiles.length} 字段` : '导入 CSV 或 XLSX 后开始分析。'}</p>
+              {roleSummary ? <small className="dataset-card__meta">{roleSummary}</small> : null}
+              <div className="dataset-card__actions">
+                <button className="secondary-button" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
+                  <Table size={14} />
+                  查看数据
+                </button>
+                <button className="secondary-button is-subtle" type="button" onClick={saveSnapshot} disabled={!hasDataset}>
+                  <Save size={14} />
+                  保存当前数据
+                </button>
+              </div>
+            </div>
+
+            {snapshots.length > 0 ? (
+              <div className="snapshot-toolbar snapshot-toolbar--compact">
+                <button
+                  className="secondary-button is-subtle is-full"
+                  type="button"
+                  onClick={() => {
+                    setIsSnapshotManageMode((current) => !current)
+                    setSelectedSnapshotIds([])
+                  }}
+                >
+                  {isSnapshotManageMode ? <Check size={14} /> : <SlidersHorizontal size={14} />}
+                  {isSnapshotManageMode ? '完成管理' : '管理历史'}
+                </button>
               </div>
             ) : null}
-            <button className="secondary-button is-full" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
-              <Table size={15} />
-              查看数据表
-            </button>
-          </div>
-
-          <div className="metrics-strip">
-            <span>
-              <strong>{rows.length}</strong>
-              rows
-            </span>
-            <span>
-              <strong>{profiles.length}</strong>
-              fields
-            </span>
-            <span>
-              <strong>{eligibleFeatureColumns.length}</strong>
-              model fields
-            </span>
-          </div>
-
-          <div className="snapshot-toolbar">
-            <button className="primary-button is-full" type="button" onClick={saveSnapshot} disabled={!hasDataset}>
-              <Save size={15} />
-              保存当前数据
-            </button>
-            <button
-              className="secondary-button is-full"
-              type="button"
-              onClick={() => {
-                setIsSnapshotManageMode((current) => !current)
-                setSelectedSnapshotIds([])
-              }}
-              disabled={snapshots.length === 0}
-            >
-              {isSnapshotManageMode ? <Check size={15} /> : <SlidersHorizontal size={15} />}
-              {isSnapshotManageMode ? '完成管理' : '批量管理'}
-            </button>
-          </div>
 
           {isSnapshotManageMode ? (
             <div className="snapshot-batchbar">
@@ -2567,11 +2638,11 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
             </div>
           ) : null}
 
-          <div className="snapshot-list">
+          <div className="snapshot-list snapshot-list--compact">
             {snapshots.length === 0 ? (
               <div className="empty-history">
                 <History size={17} />
-                保存一次当前配置后，可以从这里快速回到当时的模型和数据状态。
+                保存一次当前数据后，这里会形成可回溯的项目索引。
               </div>
             ) : (
               sortedSnapshots.map((snapshot) => (
@@ -2655,7 +2726,7 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                     <small>
                       {snapshot.pinned ? '置顶 · ' : ''}
                       {snapshot.favorite ? '收藏 · ' : ''}
-                      {snapshot.rowCount} 行 · {snapshot.fieldCount} 字段{snapshot.result ? ' · 含模型结果' : ''}
+                      {snapshot.result ? '含结果' : '仅配置'} · {new Date(snapshot.createdAt).toLocaleDateString()}
                     </small>
                   </button>
                 </article>
@@ -2669,14 +2740,13 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
           {!hasDataset ? (
             <section className="empty-workbench">
               <div className="empty-workbench__icon">
-                <Database size={26} />
+                <Database size={24} />
               </div>
-              <span className="panel__label">Start</span>
-              <h2>导入数据开始分析</h2>
-              <p>支持 CSV 和 XLSX。导入后会先进入字段角色向导，设置 ID、Time、Group 并自动完成面板数据体检。</p>
+              <h2>开始分析</h2>
+              <p>导入 CSV 或 XLSX 文件，系统将自动识别字段类型并进入数据维度设置向导。</p>
               <label className="primary-button import-cta">
-                <Upload size={16} />
-                导入数据
+                <Upload size={15} />
+                选择文件
                 <input
                   type="file"
                   accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -2689,189 +2759,170 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
             </section>
           ) : (
             <>
-              <section className="report-header">
-                <div>
-                  <span className="panel__label">Active model</span>
-                  <h2>
-                    {activeModel.name}（{activeModel.shortName}）
-                  </h2>
-                  <code>{activeModel.getFormula(sanitizedConfig)}</code>
+              <section className="workbench-focus">
+                <div className="workbench-focus__copy">
+                  <span className="panel__label">Main workspace</span>
+                  <h2>{workspaceHeading}</h2>
+                  <p>{workspaceLead}</p>
                 </div>
-                <button className="primary-button" type="button" onClick={openExportDialog} disabled={!result}>
-                  <Download size={15} />
-                  导出结果
-                </button>
-              </section>
-
-              <section className="action-guide" aria-label="当前建议动作">
-                <span>当前建议</span>
-                <strong>{nextAction}</strong>
-              </section>
-
-              <section className={`run-status-card ${isModelRunning ? 'is-running' : hasStaleResult ? 'is-stale' : result ? 'is-ready' : ''}`}>
-                <div>
-                  <strong>
-                    {isModelRunning
-                      ? `模型运行中 · ${runTask?.modelName ?? activeModel.name}`
-                      : runTask?.status === 'cancelled'
-                        ? '任务已取消'
-                      : hasStaleResult
-                        ? '参数已变更'
-                      : result
-                        ? '结果已更新'
-                        : '等待运行'}
-                  </strong>
-                  <p>
-                    {isModelRunning
-                      ? runTask?.phase || runStatus || '正在估计模型。'
-                      : runTask?.status === 'cancelled'
-                        ? '本次任务已取消，可以调整参数后重新运行。'
-                      : validationErrors.length > 0
-                        ? '参数面板存在必须修正的问题，处理后才能运行模型。'
-                      : hasStaleResult
-                        ? '模型、参数、标准误或数据角色发生变化，请重新运行以刷新结果。'
-                        : result
-                          ? '当前展示的是最新一次运行结果。'
-                          : '设置模型参数后点击运行模型，结果区才会开始计算。'}
-                  </p>
-                  {isModelRunning && runTask ? (
-                    <div className="run-task-progress" aria-label="模型运行进度">
-                      <div>
-                        <span>{runTask.progress}%</span>
-                        <span>
-                          已用 {formatDuration(runTask.elapsedMs)} / 预计 {formatDuration(runTask.estimatedMs)}
-                        </span>
-                      </div>
-                      <progress value={runTask.progress} max={100} />
-                    </div>
+                <div className="workbench-focus__actions">
+                  {result ? (
+                    <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
+                      <Download size={14} />
+                      导出结果
+                    </button>
                   ) : null}
-                </div>
-                <div className="run-status-actions">
                   {isModelRunning ? (
-                    <button className="secondary-button" type="button" onClick={cancelRunTask}>
-                      <X size={15} />
-                      取消运行
+                    <button className="secondary-button is-subtle" type="button" onClick={cancelRunTask}>
+                      <X size={14} />
+                      取消
                     </button>
                   ) : null}
                   <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasDataset || isModelRunning || validationErrors.length > 0}>
-                    <Play size={15} />
-                    {validationErrors.length > 0 ? '需调整参数' : hasStaleResult ? '更新结果' : runTask?.status === 'cancelled' ? '重新运行' : '运行模型'}
+                    <Play size={14} />
+                    {validationErrors.length > 0 ? '需调整后运行' : isModelRunning ? '运行中' : hasStaleResult ? '重新运行' : '运行模型'}
                   </button>
                 </div>
               </section>
 
-              <section className="panel-diagnosis">
-                <div className="section-title">
-                  <Activity size={18} />
-                  <h2>数据体检</h2>
+              <section className="workbench-meta-strip" aria-label="当前工作区状态">
+                <span>{activeModel.name}</span>
+                <span>{rows.length} 个观测</span>
+                <span>{profiles.length} 个字段</span>
+                <span>{panelDiagnosis.title}</span>
+                <span>{modelMaturity.label}</span>
+              </section>
+
+              <section className={`focus-task-card is-${workspaceMode} ${isModelRunning ? 'is-running' : ''} ${hasStaleResult ? 'is-stale' : ''}`}>
+                <div>
+                  <strong>
+                    {isModelRunning
+                      ? `正在运行 ${runTask?.modelName ?? activeModel.name}`
+                      : runTask?.status === 'cancelled'
+                        ? '本次运行已取消'
+                        : hasStaleResult
+                          ? '参数已经更新，结果需要刷新'
+                          : result
+                            ? '当前结果可继续阅读或导出'
+                            : '当前任务是完成建模设定'}
+                  </strong>
+                  <p>{nextAction}</p>
                 </div>
-                <div className={`diagnosis-card is-${panelDiagnosis.status}`}>
-                  <div>
-                    <strong>{panelDiagnosis.title}</strong>
-                    <p>{panelDiagnosis.summary}</p>
-                  </div>
-                  <div className="diagnosis-metrics">
-                    <span>
-                      <strong>{panelDiagnosis.idCount}</strong>
-                      ID
-                    </span>
-                    <span>
-                      <strong>{panelDiagnosis.timeCount}</strong>
-                      Time
-                    </span>
-                    <span>
-                      <strong>{panelDiagnosis.expectedObservations}</strong>
-                      理论观测
-                    </span>
-                    <span>
-                      <strong>{panelDiagnosis.actualObservations}</strong>
-                      有效观测
-                    </span>
-                    <span>
-                      <strong>{panelDiagnosis.missingCombinations}</strong>
-                      缺失组合
-                    </span>
-                    <span>
-                      <strong>{panelDiagnosis.duplicateCombinations}</strong>
-                      重复组合
-                    </span>
-                  </div>
-                  {panelDiagnosis.examples.length > 0 ? (
-                    <div className="diagnosis-reasons">
-                      {panelDiagnosis.examples.map((example) => (
-                        <p key={example}>{example}</p>
-                      ))}
+                {isModelRunning && runTask ? (
+                  <div className="run-task-progress" aria-label="模型运行进度">
+                    <div>
+                      <span>{runTask.progress}%</span>
+                      <span>
+                        {formatDuration(runTask.elapsedMs)} / {formatDuration(runTask.estimatedMs)}
+                      </span>
                     </div>
-                  ) : null}
-                </div>
+                    <progress value={runTask.progress} max={100} />
+                  </div>
+                ) : null}
               </section>
 
               <section className="results-workspace">
                 <div className="result-panel result-primary-panel">
                   <div className="result-primary-header">
-                    <div className="section-title">
-                      <Activity size={18} />
-                      <h2>模型摘要与回归结果</h2>
+                    <div className="result-primary-header__copy">
+                      <div className="section-title">
+                        <Activity size={18} />
+                        <h2>{result ? '结果阅读' : '当前任务'}</h2>
+                      </div>
+                      <p>{activeModel.name} · {activeFormula}</p>
                     </div>
-	                    <div className="export-actions">
-	                      <button className="ghost-button" type="button" onClick={openExportDialog} disabled={!result} title="选择格式和导出内容">
-	                        导出
-	                      </button>
-	                    </div>
+                    <div className="export-actions">
+                      <button className="ghost-button" type="button" onClick={openExportDialog} disabled={!result} title="选择格式和导出内容">
+                        导出
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="result-primary-summary">
-                    {isModelRunning ? (
-                      <div className="notice is-running-task">
-                        <Activity size={18} />
+                  {isModelRunning ? (
+                    <div className="notice is-running-task">
+                      <Activity size={16} />
+                      <div>
+                        <strong>{runTask?.phase || '正在运行模型'}</strong>
+                        {runTask ? (
+                          <span>{runTask.progress}% · {formatDuration(runTask.elapsedMs)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : error ? (
+                    <div className="notice is-error">
+                      <AlertTriangle size={16} />
+                      {error}
+                    </div>
+                  ) : result ? (
+                    <>
+                      <div className="paper-section-heading">
+                        <span className="paper-section-heading__index">一</span>
                         <div>
-                          <strong>{runTask?.phase || runStatus || '正在运行模型。'}</strong>
-                          {runTask ? (
-                            <span>
-                              {runTask.progress}% · 已用 {formatDuration(runTask.elapsedMs)}
-                            </span>
-                          ) : null}
+                          <strong>核心结论</strong>
+                          <small>Natural-language findings</small>
                         </div>
                       </div>
-                    ) : error ? (
-                      <div className="notice is-error">
-                        <AlertTriangle size={18} />
-                        {error}
+                      <section className="lead-conclusion-card">
+                        <div className="section-title">
+                          <CheckCircle size={18} />
+                          <h2>核心结论</h2>
+                        </div>
+                        <p className="lead-conclusion-card__lead">{leadInsight || '模型已完成运行，可以开始阅读结果。'}</p>
+                        {secondaryInsights.length > 0 ? (
+                          <div className="lead-conclusion-card__notes">
+                            {secondaryInsights.map((insight) => (
+                              <p key={insight}>{insight}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                      </section>
+
+                      <blockquote className="paper-quote-note">
+                        <p>“建议先阅读自然语言结论，再结合摘要指标和系数估计判断显著性、方向与经济含义。”</p>
+                        <cite>结果解读说明</cite>
+                      </blockquote>
+
+                      <div className="paper-section-heading">
+                        <span className="paper-section-heading__index">二</span>
+                        <div>
+                          <strong>模型摘要</strong>
+                          <small>Model summary</small>
+                        </div>
                       </div>
-                    ) : result ? (
-                      <>
+                      <div className="result-primary-summary">
                         <div className="summary-grid is-compact">
-                          {result.summary.slice(0, 6).map((metric) => (
+                          {visibleSummaryMetrics.map((metric) => (
                             <span key={metric.label}>
                               <strong>{formatMetricValue(metric)}</strong>
                               {metric.label}
                             </span>
                           ))}
                         </div>
-                        {resultInsights.length > 0 ? (
-                          <div className="result-insights is-inline">
-                            <strong>
-                              模型可信度：{modelMaturity.label} · {activeModel.methodLabel}
-                            </strong>
-                            <p>{modelMaturity.description}</p>
-                            {activeModel.limitations?.slice(0, 2).map((limitation) => (
-                              <p key={limitation}>{limitation}</p>
-                            ))}
-                            {resultInsights.map((insight) => (
-                              <p key={insight}>{insight}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <div className="notice">
-                        {runTask?.status === 'cancelled' ? <X size={18} /> : <Play size={18} />}
-                        {runTask?.status === 'cancelled' ? '本次模型任务已取消，结果未更新。' : hasStaleResult ? '参数已变更，点击运行模型刷新结果。' : '点击运行模型后展示摘要和结果表。'}
+                        <div className="result-insights result-insights--quiet">
+                          <strong>阅读提示</strong>
+                          <p>先确认模型摘要与显著性水平，再查看系数方向、区间和稳健性结果。</p>
+                          <p>高级诊断、运行日志和环境信息默认收起，需要时再展开查看。</p>
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </>
+                  ) : (
+                    <div className="notice">
+                      <Play size={16} />
+                      {hasStaleResult ? '参数已变更，点击运行刷新。' : '设置参数后运行模型查看结果。'}
+                    </div>
+                  )}
 
                   <div className="result-tables">
+                    {result ? <div className="result-tables__label">统计表格</div> : null}
+                    {result ? (
+                      <div className="paper-section-heading paper-section-heading--compact">
+                        <span className="paper-section-heading__index">三</span>
+                        <div>
+                          <strong>系数估计</strong>
+                          <small>Coefficient estimates</small>
+                        </div>
+                      </div>
+                    ) : null}
                     {mainResultTable ? (
                       <div className="coef-table is-primary" key={mainResultTable.id}>
                         <div className="table-caption">{mainResultTable.title}</div>
@@ -2897,6 +2948,12 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                           </div>
                         ))}
                       </div>
+                    ) : null}
+                    {mainResultTable ? (
+                      <blockquote className="paper-quote-note paper-quote-note--compact">
+                        <p>“本表优先用于判断变量方向、显著性和区间范围；若用于正式写作，请同步报告模型摘要与估计设定。”</p>
+                        <cite>表注说明</cite>
+                      </blockquote>
                     ) : null}
                     {secondaryResultTables.length > 0 ? (
                       <div className="result-secondary-tables">
@@ -2940,79 +2997,103 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                   </div>
                 </div>
 
-                <div className="result-support-row">
-                  <div className="result-panel result-diagnostic-card">
-                    <div className="section-title">
-                      <Activity size={18} />
-                      <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
-                    </div>
-                    {primaryDiagnostic ? (
-                      <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
-                        {primaryDiagnostic.actual.map((actual, index) => {
-                          const maxActual = Math.max(...primaryDiagnostic.actual)
-                          const maxFitted = Math.max(...primaryDiagnostic.fitted)
-                          return (
-                            <span
-                              key={`${actual}-${index}`}
-                              style={{
-                                left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
-                                bottom: `${(actual / maxActual) * 80 + 8}%`,
-                              }}
-                            />
-                          )
-                        })}
-                      </div>
-                    ) : correlationMatrix ? (
-                      <div
-                        className="correlation-heatmap is-compact"
-                        style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
-                      >
-                        <span />
-                        {correlationMatrix.variables.map((variable) => (
-                          <strong key={variable}>{variable}</strong>
-                        ))}
-                        {correlationMatrix.matrix.flatMap((row, rowIndex) => [
-                          <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
-                            {correlationMatrix.variables[rowIndex]}
-                          </strong>,
-                          ...row.map((value, columnIndex) => (
-                            <span
-                              key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
-                              style={{
-                                backgroundColor:
-                                  value >= 0
-                                    ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
-                                    : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
-                                color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
-                              }}
-                            >
-                              {formatNumber(value, 2)}
-                            </span>
-                          )),
-                        ])}
-                      </div>
-                    ) : (
-                      <div className="empty-diagnostic is-compact">
-                        <Activity size={18} />
-                        暂无诊断图。
-                      </div>
-                    )}
-                  </div>
+                {result ? (
+                  <section className="result-disclosure">
+                    <button
+                      className={`result-disclosure__toggle ${isDiagnosticsOpen ? 'is-open' : ''}`}
+                      type="button"
+                      onClick={() => setIsDiagnosticsOpen((current) => !current)}
+                    >
+                      <span>诊断与运行日志</span>
+                      <small>{isDiagnosticsOpen ? '收起补充诊断' : '展开补充诊断'}</small>
+                    </button>
 
-                  <div className="result-panel result-log-card">
-                    <div className="section-title">
-                      <Activity size={18} />
-                      <h2>运行日志</h2>
-                    </div>
-                    <div className="run-log is-expanded">
-                      {runLogs.map((entry, index) => (
-                        <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
-                          {entry.message}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                    {isDiagnosticsOpen ? (
+                      <div className="result-disclosure__body">
+                        <div className="paper-section-heading paper-section-heading--compact paper-section-heading--muted">
+                          <span className="paper-section-heading__index">四</span>
+                          <div>
+                            <strong>补充诊断</strong>
+                            <small>Diagnostics and logs</small>
+                          </div>
+                        </div>
+                        <div className="result-support-row">
+                          <div className="result-panel result-diagnostic-card">
+                            <div className="section-title">
+                              <Activity size={18} />
+                              <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
+                            </div>
+                            {primaryDiagnostic ? (
+                              <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
+                                {primaryDiagnostic.actual.map((actual, index) => {
+                                  const maxActual = Math.max(...primaryDiagnostic.actual)
+                                  const maxFitted = Math.max(...primaryDiagnostic.fitted)
+                                  return (
+                                    <span
+                                      key={`${actual}-${index}`}
+                                      style={{
+                                        left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
+                                        bottom: `${(actual / maxActual) * 80 + 8}%`,
+                                      }}
+                                    />
+                                  )
+                                })}
+                              </div>
+                            ) : correlationMatrix ? (
+                              <div
+                                className="correlation-heatmap is-compact"
+                                style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
+                              >
+                                <span />
+                                {correlationMatrix.variables.map((variable) => (
+                                  <strong key={variable}>{variable}</strong>
+                                ))}
+                                {correlationMatrix.matrix.flatMap((row, rowIndex) => [
+                                  <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
+                                    {correlationMatrix.variables[rowIndex]}
+                                  </strong>,
+                                  ...row.map((value, columnIndex) => (
+                                    <span
+                                      key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
+                                      style={{
+                                        backgroundColor:
+                                          value >= 0
+                                            ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
+                                            : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
+                                        color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
+                                      }}
+                                    >
+                                      {formatNumber(value, 2)}
+                                    </span>
+                                  )),
+                                ])}
+                              </div>
+                            ) : (
+                              <div className="empty-diagnostic is-compact">
+                                <Activity size={18} />
+                                暂无诊断图。
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="result-panel result-log-card">
+                            <div className="section-title">
+                              <Activity size={18} />
+                              <h2>运行日志</h2>
+                            </div>
+                            <div className="run-log is-expanded">
+                              {runLogs.map((entry, index) => (
+                                <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
+                                  {entry.message}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
               </section>
             </>
           )}
@@ -3021,140 +3102,124 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
         <aside className="panel config-panel">
           <div className="panel__header">
             <div>
-              <span className="panel__label">{activeModel.panelLabel}</span>
-              <h2>参数面板</h2>
+              <span className="panel__label">Context</span>
+              <h2>上下文面板</h2>
             </div>
-            <Settings size={18} />
+            <button className="ghost-button" type="button" onClick={() => setIsModelLibraryOpen(true)} title="模型库" disabled={isModelRunning}>
+              <Search size={16} />
+            </button>
+          </div>
+
+          <div className="context-mode-card">
+            <span className="panel__label">当前模式</span>
+            <strong>{workspaceHeading}</strong>
+            <p>{nextAction}</p>
           </div>
 
           <div className="active-model-card">
             <div className="active-model-card__header">
               <span>{getModelCategory(activeModel)}</span>
-              <button className="secondary-button" type="button" onClick={() => setIsModelLibraryOpen(true)} disabled={isModelRunning}>
-                <Search size={15} />
-                选择模型
+              <button className="secondary-button is-subtle" type="button" onClick={() => setIsModelLibraryOpen(true)} disabled={isModelRunning}>
+                切换模型
               </button>
             </div>
-            <div className="active-model-card__title">
-              <strong>
-                {activeModel.name}（{activeModel.shortName}）
-              </strong>
-              <small>{activeModel.fullName}</small>
-            </div>
             <small className="model-description">{activeModel.description}</small>
-            <div className="model-use-case">
-              <strong>适用场景</strong>
-              <span>{getModelUseCase(activeModel)}</span>
-            </div>
             <div className={`model-quality is-${modelMaturity.level}`}>
               <strong>{modelMaturity.label}</strong>
               <span>{modelMaturity.description}</span>
             </div>
-            {activeModelUsesProfessionalBackend && professionalEnv ? (
-              <div className={`professional-env-card is-${professionalStatusLabels[professionalEnv.status].tone}`}>
-                <div className="professional-env-card__header">
-                  <span>
-                    {professionalEnv.status === 'ready' ? <CheckCircle size={14} /> : professionalEnv.status === 'checking' ? <Activity size={14} /> : <AlertTriangle size={14} />}
-                    {professionalStatusLabels[professionalEnv.status].label}
-                  </span>
-                  <button
-                    className="professional-env-card__refresh"
-                    type="button"
-                    onClick={() => setEnvironmentCheckNonce((current) => current + 1)}
-                    disabled={professionalEnv.status === 'checking' || isModelRunning}
-                  >
-                    {professionalEnv.status === 'checking' ? '检测中' : '重新检测'}
-                  </button>
-                </div>
-                <p>{professionalEnv.message}</p>
-                <div className="professional-env-card__meta">
-                  <span>
-                    <strong>当前路径</strong>
-                    {backendLabels[professionalEnv.activeBackend] ?? professionalEnv.activeBackend}
-                  </span>
-                  <span>
-                    <strong>最近检测</strong>
-                    {formatCheckTime(professionalEnv.checkedAt)}
-                  </span>
-                  <span>
-                    <strong>Python</strong>
-                    {professionalEnv.python?.available ? `${professionalEnv.python.version} · ${professionalEnv.python.path}` : '未检测到'}
-                  </span>
-                </div>
-                {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
-                  <div className="professional-env-card__missing">
-                    <strong>完整专业依赖缺失</strong>
-                    <span>{professionalEnv.missingProfessional?.join(', ')}</span>
-                  </div>
-                ) : null}
-                {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
-                  <div className="professional-env-card__missing">
-                    <strong>轻量依赖缺失</strong>
-                    <span>{professionalEnv.missingLightweight?.join(', ')}</span>
-                  </div>
-                ) : null}
-                {window.visualStatsDesktop?.installProfessionalDependencies && professionalEnv.status !== 'web' ? (
-                  <div className="professional-env-card__actions">
-                    {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => installProfessionalDependencies('lightweight')}
-                        disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
-                      >
-                        安装轻量依赖
-                      </button>
-                    ) : null}
-                    {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => installProfessionalDependencies('professional')}
-                        disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
-                      >
-                        安装完整专业依赖
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {professionalInstall.status !== 'idle' ? (
-                  <div className={`professional-install-log is-${professionalInstall.status}`}>
-                    <strong>
-                      {professionalInstall.status === 'installing'
-                        ? '安装中'
-                        : professionalInstall.status === 'success'
-                          ? '安装完成'
-                          : '安装失败'}
-                    </strong>
-                    <span>{professionalInstall.message}</span>
-                    {(professionalInstall.missingAfterInstall?.length ?? 0) > 0 ? (
-                      <span>仍缺失：{professionalInstall.missingAfterInstall?.join(', ')}</span>
-                    ) : null}
-                    {professionalInstall.stderr || professionalInstall.stdout ? <code>{professionalInstall.stderr || professionalInstall.stdout}</code> : null}
-                  </div>
-                ) : null}
+            <div className="model-identity">
+              <span>{getModelCategory(activeModel)}</span>
+              <code>{activeFormula}</code>
+            </div>
+          </div>
+
+          {workspaceMode === 'data' ? (
+            <section className="context-panel-card">
+              <div className="parameter-section__header">
+                <strong>数据上下文</strong>
+                <span>当前先聚焦数据导入、维度字段和字段角色。</span>
               </div>
-            ) : null}
-            {validationIssues.length > 0 ? (
-              <div className="parameter-validation">
-                <strong>运行前检查</strong>
-                {validationIssues.map((issue) => (
-                  <p className={issue.level === 'error' ? 'is-error' : 'is-warning'} key={issue.message}>
-                    <AlertTriangle size={13} />
-                    {issue.message}
-                  </p>
+              <div className="context-mini-list">
+                <div>
+                  <span>数据文件</span>
+                  <strong>{fileName || '尚未导入'}</strong>
+                </div>
+                <div>
+                  <span>维度字段</span>
+                  <strong>{roleSummary || '尚未设置 ID / Time / Group'}</strong>
+                </div>
+                <div>
+                  <span>数据概况</span>
+                  <strong>{rows.length} 行 · {profiles.length} 字段</strong>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {workspaceMode === 'model' ? (
+            <section className="context-panel-card">
+              <div className="parameter-section__header">
+                <strong>建模上下文</strong>
+                <span>右侧只保留本次运行最相关的配置信息。</span>
+              </div>
+              <div className="context-mini-list">
+                <div>
+                  <span>当前模型</span>
+                  <strong>{activeModel.name}</strong>
+                </div>
+                <div>
+                  <span>字段设定</span>
+                  <strong>{fieldReadinessSummary}</strong>
+                </div>
+                <div>
+                  <span>解释变量</span>
+                  <strong>{selectedFeatureSummary}</strong>
+                </div>
+              </div>
+              <p className="context-panel-card__footnote">{modelContextLead}</p>
+            </section>
+          ) : null}
+
+          {workspaceMode === 'result' && result ? (
+            <section className="context-panel-card">
+              <div className="parameter-section__header">
+                <strong>结果辅助</strong>
+                <span>用于解释、导出和回顾本次运行。</span>
+              </div>
+              <div className="summary-grid summary-grid--sidebar">
+                {visibleSummaryMetrics.map((metric) => (
+                  <span key={metric.label}>
+                    <strong>{formatMetricValue(metric)}</strong>
+                    {metric.label}
+                  </span>
                 ))}
               </div>
-            ) : (
-              <div className="parameter-validation is-ok">
-                <strong>运行前检查</strong>
-                <p>
-                  <CheckCircle size={13} />
-                  当前参数可以运行。
-                </p>
+              <button className="secondary-button is-subtle is-full" type="button" onClick={openExportDialog} disabled={!result}>
+                <Download size={14} />
+                选择导出内容
+              </button>
+            </section>
+          ) : null}
+
+          {workspaceMode === 'report' && result ? (
+            <section className="context-panel-card">
+              <div className="parameter-section__header">
+                <strong>报告上下文</strong>
+                <span>导出阶段优先确认结论、核心表格和附加信息。</span>
               </div>
-            )}
-          </div>
+              <div className="context-mini-list">
+                <div>
+                  <span>核心结论</span>
+                  <strong>{leadInsight || '结果已生成，可选择导出内容。'}</strong>
+                </div>
+                <div>
+                  <span>模型摘要</span>
+                  <strong>{visibleSummaryMetrics.map((metric) => `${metric.label} ${formatMetricValue(metric)}`).join(' · ')}</strong>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           {isModelRunning ? (
             <div className="parameter-lock-notice">
@@ -3165,7 +3230,7 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
 
           {activeModel.parameterSchema ? (
             <div className="parameter-schema">
-              {parameterSections.map((section) => (
+              {primaryParameterSections.map((section) => (
                 <section className="parameter-section" key={section.id}>
                   <div className="parameter-section__header">
                     <strong>{section.title}</strong>
@@ -3237,117 +3302,276 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
             </section>
           ) : null}
 
-          {activeModel.requiresTarget && !activeModel.usesRawRows && (
-            <section className="parameter-section">
-              <div className="parameter-section__header">
-                <strong>数据处理</strong>
-                <span>运行前对缺失值和分类变量进行预处理。</span>
-              </div>
-            <div className="prep-controls">
-              <label className="control-group">
-                <span>缺失值处理</span>
-                <select
-                  value={prepConfig.missingStrategy}
-                  disabled={isModelRunning}
-                  onChange={(event) =>
-                    setPrepConfig((current) => ({
-                      ...current,
-                      missingStrategy: event.target.value as DataPrepConfig['missingStrategy'],
-                    }))
-                  }
-                >
-                  {missingOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+          <details className="context-disclosure">
+            <summary>高级参数与模型设定</summary>
+            <div className="context-disclosure__body">
+              {activeModel.parameterSchema && advancedSchemaSections.length > 0 ? (
+                <div className="parameter-schema">
+                  {advancedSchemaSections.map((section) => (
+                    <section className="parameter-section" key={section.id}>
+                      <div className="parameter-section__header">
+                        <strong>{section.title}</strong>
+                        <span>{section.description}</span>
+                      </div>
+                      {section.fields.map(renderParameterField)}
+                    </section>
                   ))}
-                </select>
-              </label>
+                </div>
+              ) : null}
 
-              <label className="control-group">
-                <span>分类变量编码</span>
-                <select
-                  value={prepConfig.categoricalEncoding}
-                  disabled={isModelRunning}
-                  onChange={(event) =>
-                    setPrepConfig((current) => ({
-                      ...current,
-                      categoricalEncoding: event.target.value as DataPrepConfig['categoricalEncoding'],
-                    }))
-                  }
-                >
-                  <option value="one-hot">One-hot 编码</option>
-                  <option value="none">不编码</option>
-                </select>
-              </label>
-            </div>
-            </section>
-          )}
+              {activeModel.requiresTarget && !activeModel.usesRawRows && (
+                <section className="parameter-section">
+                  <div className="parameter-section__header">
+                    <strong>数据处理</strong>
+                    <span>运行前对缺失值和分类变量进行预处理。</span>
+                  </div>
+                  <div className="prep-controls">
+                    <label className="control-group">
+                      <span>缺失值处理</span>
+                      <select
+                        value={prepConfig.missingStrategy}
+                        disabled={isModelRunning}
+                        onChange={(event) =>
+                          setPrepConfig((current) => ({
+                            ...current,
+                            missingStrategy: event.target.value as DataPrepConfig['missingStrategy'],
+                          }))
+                        }
+                      >
+                        {missingOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
 
-          {activeModel.supportsInference ? (
-            <section className="parameter-section">
-              <div className="parameter-section__header">
-                <strong>推断设置</strong>
-                <span>设置标准误类型和聚类字段。</span>
+                    <label className="control-group">
+                      <span>分类变量编码</span>
+                      <select
+                        value={prepConfig.categoricalEncoding}
+                        disabled={isModelRunning}
+                        onChange={(event) =>
+                          setPrepConfig((current) => ({
+                            ...current,
+                            categoricalEncoding: event.target.value as DataPrepConfig['categoricalEncoding'],
+                          }))
+                        }
+                      >
+                        <option value="one-hot">One-hot 编码</option>
+                        <option value="none">不编码</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              )}
+
+              {activeModel.supportsInference ? (
+                <section className="parameter-section">
+                  <div className="parameter-section__header">
+                    <strong>推断设置</strong>
+                    <span>设置标准误类型和聚类字段。</span>
+                  </div>
+                  <div className="inference-controls">
+                    <label className="control-group">
+                      <span>标准误</span>
+                      <select
+                        value={inferenceConfig.standardError}
+                        disabled={isModelRunning}
+                        onChange={(event) =>
+                          setInferenceConfig((current) => ({
+                            ...current,
+                            standardError: event.target.value as InferenceConfig['standardError'],
+                          }))
+                        }
+                      >
+                        <option value="ols">普通标准误</option>
+                        <option value="robust">Robust 稳健标准误</option>
+                        <option value="cluster">Cluster 聚类稳健标准误</option>
+                      </select>
+                    </label>
+
+                    {inferenceConfig.standardError === 'cluster' ? (
+                      <label className="control-group">
+                        <span>Cluster 字段</span>
+                        <select
+                          value={effectiveInference.clusterField}
+                          disabled={isModelRunning}
+                          onChange={(event) =>
+                            setInferenceConfig((current) => ({
+                              ...current,
+                              clusterField: event.target.value,
+                            }))
+                          }
+                        >
+                          {clusterColumns.map((column) => (
+                            <option key={column} value={column}>
+                              {column}
+                            </option>
+                          ))}
+                        </select>
+                        <small className="model-description">优先使用导入向导中的 ID/Time/Group 字段。</small>
+                      </label>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+
+              <div className="settings-list">
+                {activeModel.getSettings(sanitizedConfig).map((setting) => (
+                  <div key={setting.label}>
+                    <span>{setting.label}</span>
+                    <strong>{setting.value}</strong>
+                  </div>
+                ))}
               </div>
-            <div className="inference-controls">
-              <label className="control-group">
-                <span>标准误</span>
-                <select
-                  value={inferenceConfig.standardError}
-                  disabled={isModelRunning}
-                  onChange={(event) =>
-                    setInferenceConfig((current) => ({
-                      ...current,
-                      standardError: event.target.value as InferenceConfig['standardError'],
-                    }))
-                  }
-                >
-                  <option value="ols">普通标准误</option>
-                  <option value="robust">Robust 稳健标准误</option>
-                  <option value="cluster">Cluster 聚类稳健标准误</option>
-                </select>
-              </label>
 
-              {inferenceConfig.standardError === 'cluster' ? (
-                <label className="control-group">
-                  <span>Cluster 字段</span>
-                  <select
-                    value={effectiveInference.clusterField}
-                    disabled={isModelRunning}
-                    onChange={(event) =>
-                      setInferenceConfig((current) => ({
-                        ...current,
-                        clusterField: event.target.value,
-                      }))
-                    }
-                  >
-                    {clusterColumns.map((column) => (
-                      <option key={column} value={column}>
-                        {column}
-                      </option>
-                    ))}
-                  </select>
-                  <small className="model-description">优先使用导入向导中的 ID/Time/Group 字段。</small>
-                </label>
+              <div className="formula-box">
+                <span>Formula</span>
+                <code>{activeModel.getFormula(sanitizedConfig)}</code>
+              </div>
+            </div>
+          </details>
+
+          <details className="context-disclosure">
+            <summary>检查、推荐与运行环境</summary>
+            <div className="context-disclosure__body">
+              {validationIssues.length > 0 ? (
+                <div className="parameter-validation">
+                  <strong>运行前检查</strong>
+                  {validationIssues.map((issue) => (
+                    <p className={issue.level === 'error' ? 'is-error' : 'is-warning'} key={issue.message}>
+                      <AlertTriangle size={13} />
+                      {issue.message}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <div className="parameter-validation is-ok">
+                  <strong>运行前检查</strong>
+                  <p>
+                    <CheckCircle size={13} />
+                    当前参数可以运行。
+                  </p>
+                </div>
+              )}
+
+              {recommendedModels.length > 0 ? (
+                <div className="model-recommendations">
+                  <strong>数据推荐</strong>
+                  {recommendedModels.map((rec) => {
+                    const plugin = modelPlugins.find((p) => p.id === rec.id)
+                    return plugin ? (
+                      <button
+                        key={rec.id}
+                        className="model-recommendation-chip"
+                        type="button"
+                        onClick={() => {
+                          setActiveModelId(rec.id)
+                          const featureColumns = getFeatureColumnsForPlugin(plugin, profiles.filter((p) => !dimensionColumns.has(p.name)), prepConfig.categoricalEncoding)
+                          setModelConfig(plugin.getDefaultConfig(featureColumns, numericColumns))
+                          setModelUsage((current) => ({
+                            ...current,
+                            [rec.id]: { usedCount: (current[rec.id]?.usedCount ?? 0) + 1, lastUsedAt: new Date().toISOString() },
+                          }))
+                        }}
+                        disabled={isModelRunning}
+                      >
+                        <span>{plugin.name}</span>
+                        <small>{rec.reason}</small>
+                      </button>
+                    ) : null
+                  })}
+                </div>
+              ) : null}
+
+              {activeModelUsesProfessionalBackend && professionalEnv ? (
+                <div className={`professional-env-card is-${professionalStatusLabels[professionalEnv.status].tone}`}>
+                  <div className="professional-env-card__header">
+                    <span>
+                      {professionalEnv.status === 'ready' ? <CheckCircle size={14} /> : professionalEnv.status === 'checking' ? <Activity size={14} /> : <AlertTriangle size={14} />}
+                      {professionalStatusLabels[professionalEnv.status].label}
+                    </span>
+                    <button
+                      className="professional-env-card__refresh"
+                      type="button"
+                      onClick={() => setEnvironmentCheckNonce((current) => current + 1)}
+                      disabled={professionalEnv.status === 'checking' || isModelRunning}
+                    >
+                      {professionalEnv.status === 'checking' ? '检测中' : '重新检测'}
+                    </button>
+                  </div>
+                  <p>{professionalEnv.message}</p>
+                  <div className="professional-env-card__meta">
+                    <span>
+                      <strong>当前路径</strong>
+                      {backendLabels[professionalEnv.activeBackend] ?? professionalEnv.activeBackend}
+                    </span>
+                    <span>
+                      <strong>最近检测</strong>
+                      {formatCheckTime(professionalEnv.checkedAt)}
+                    </span>
+                    <span>
+                      <strong>Python</strong>
+                      {professionalEnv.python?.available ? `${professionalEnv.python.version} · ${professionalEnv.python.path}` : '未检测到'}
+                    </span>
+                  </div>
+                  {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
+                    <div className="professional-env-card__missing">
+                      <strong>完整专业依赖缺失</strong>
+                      <span>{professionalEnv.missingProfessional?.join(', ')}</span>
+                    </div>
+                  ) : null}
+                  {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
+                    <div className="professional-env-card__missing">
+                      <strong>轻量依赖缺失</strong>
+                      <span>{professionalEnv.missingLightweight?.join(', ')}</span>
+                    </div>
+                  ) : null}
+                  {window.visualStatsDesktop?.installProfessionalDependencies && professionalEnv.status !== 'web' ? (
+                    <div className="professional-env-card__actions">
+                      {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => installProfessionalDependencies('lightweight')}
+                          disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
+                        >
+                          安装轻量依赖
+                        </button>
+                      ) : null}
+                      {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => installProfessionalDependencies('professional')}
+                          disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
+                        >
+                          安装完整专业依赖
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {professionalInstall.status !== 'idle' ? (
+                    <div className={`professional-install-log is-${professionalInstall.status}`}>
+                      <strong>
+                        {professionalInstall.status === 'installing'
+                          ? '安装中'
+                          : professionalInstall.status === 'success'
+                            ? '安装完成'
+                            : '安装失败'}
+                      </strong>
+                      <span>{professionalInstall.message}</span>
+                      {(professionalInstall.missingAfterInstall?.length ?? 0) > 0 ? (
+                        <span>仍缺失：{professionalInstall.missingAfterInstall?.join(', ')}</span>
+                      ) : null}
+                      {professionalInstall.stderr || professionalInstall.stdout ? <code>{professionalInstall.stderr || professionalInstall.stdout}</code> : null}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-            </section>
-          ) : null}
-
-          <div className="settings-list">
-            {activeModel.getSettings(sanitizedConfig).map((setting) => (
-              <div key={setting.label}>
-                <span>{setting.label}</span>
-                <strong>{setting.value}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="formula-box">
-            <span>Formula</span>
-            <code>{activeModel.getFormula(sanitizedConfig)}</code>
-          </div>
+          </details>
         </aside>
       </section>
 
@@ -3363,6 +3587,21 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
               <button className="ghost-button" type="button" onClick={() => setIsModelLibraryOpen(false)} title="关闭">
                 <X size={16} />
               </button>
+            </div>
+
+            <div className="modal-summary-strip">
+              <div>
+                <span>当前模型</span>
+                <strong>{activeModel.name}</strong>
+              </div>
+              <div>
+                <span>当前分类</span>
+                <strong>{selectedModelCategory}</strong>
+              </div>
+              <div>
+                <span>匹配结果</span>
+                <strong>{filteredModelPlugins.length} 个插件</strong>
+              </div>
             </div>
 
             <div className="model-library-toolbar">
@@ -3624,6 +3863,21 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
               </button>
             </div>
 
+            <div className="modal-summary-strip">
+              <div>
+                <span>导入原则</span>
+                <strong>维度字段不会进入后续因变量和自变量候选</strong>
+              </div>
+              <div>
+                <span>当前 ID</span>
+                <strong>{pendingImport.roles.idFields.join(', ') || '未设置'}</strong>
+              </div>
+              <div>
+                <span>当前 Time</span>
+                <strong>{pendingImport.roles.timeField || '未设置'}</strong>
+              </div>
+            </div>
+
             <div className="import-wizard__body">
               <section className="role-picker">
                 <div className="section-title">
@@ -3752,6 +4006,21 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
               <button className="ghost-button" type="button" onClick={() => setIsDataModalOpen(false)} title="关闭">
                 <X size={16} />
               </button>
+            </div>
+
+            <div className="modal-summary-strip">
+              <div>
+                <span>数据规模</span>
+                <strong>{rows.length} 行 · {profiles.length} 字段</strong>
+              </div>
+              <div>
+                <span>维度字段</span>
+                <strong>{roleSummary || '尚未设置 ID / Time / Group'}</strong>
+              </div>
+              <div>
+                <span>平衡性</span>
+                <strong>{panelDiagnosis.title}</strong>
+              </div>
             </div>
 
             <div className="data-modal__body">
