@@ -25,12 +25,7 @@
     "directories": {
       "output": "release"
     },
-    "extraFiles": [
-      {
-        "from": "build/windows/Start Visual Stats Lab.cmd",
-        "to": "Start Visual Stats Lab.cmd"
-      }
-    ],
+
     "extraResources": [
       {
         "from": "backend",

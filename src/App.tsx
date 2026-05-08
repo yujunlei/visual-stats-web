@@ -245,11 +245,48 @@ type CustomPublicationColumnDraft = {
   modelLabel: string
 }
 
+type CustomPublicationFormatRules = {
+  coefficientDigits: number
+  statisticDigits: number
+  nDigits: number
+  r2Digits: number
+  parenthesisMode: 't' | 'z' | 'stdError'
+  starLevels: {
+    one: number
+    two: number
+    three: number
+  }
+  missingDisplay: '' | '-' | '/'
+  booleanDisplay: 'yes-no' | 'yes-blank' | 'check'
+}
+
 type CustomPublicationConfig = {
   title: string
   note: string
   selectedSourceIds: string[]
   columns: Record<string, CustomPublicationColumnDraft>
+  columnOrder: string[]
+  variableOrder: string[]
+  variableLabels: Record<string, string>
+  hiddenVariableIds: string[]
+  statisticOrder: string[]
+  statisticLabels: Record<string, string>
+  disabledStatisticIds: string[]
+  formatRules: CustomPublicationFormatRules
+}
+
+type CustomPublicationTemplate = {
+  id: string
+  name: string
+  updatedAt: string
+  config: CustomPublicationConfig
+}
+
+type CustomPublicationPresetId = 'baseline' | 'heterogeneity' | 'robustness' | 'endogeneity'
+
+type CustomPublicationDragItem = {
+  kind: 'column' | 'variable' | 'statistic'
+  id: string
 }
 
 type ProfessionalModelPayload = {
@@ -531,6 +568,129 @@ const formatDuration = (ms: number) => {
   const remainingSeconds = seconds % 60
   return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
 }
+
+const customPublicationTemplateStorageKey = 'visual-stats-lab:custom-publication-templates'
+const customPublicationDefaultTemplateStorageKey = 'visual-stats-lab:custom-publication-default-template'
+const customPublicationDraftStorageKey = 'visual-stats-lab:custom-publication-draft'
+
+const formatPublicationThreshold = (value: number) => {
+  const normalized = Number(value.toFixed(3))
+  return normalized.toString()
+}
+
+const parenthesisModeLabel = (mode: CustomPublicationFormatRules['parenthesisMode']) => {
+  if (mode === 'stdError') return '标准误'
+  if (mode === 'z') return 'z 值'
+  return 't 值'
+}
+
+const buildCustomPublicationNote = (formatRules: CustomPublicationFormatRules) =>
+  `注：稳健标准误；括号内为 ${parenthesisModeLabel(formatRules.parenthesisMode)}；* p<${formatPublicationThreshold(formatRules.starLevels.one)}，** p<${formatPublicationThreshold(
+    formatRules.starLevels.two,
+  )}，*** p<${formatPublicationThreshold(formatRules.starLevels.three)}`
+
+const customPublicationPresetMeta: Array<{ id: CustomPublicationPresetId; label: string; detail: string }> = [
+  { id: 'baseline', label: '基准回归', detail: '保留 Controls、固定效应、N 与 Adj-R²，适合主回归结果。' },
+  { id: 'heterogeneity', label: '异质性', detail: '强调分组列头，适合不同样本或机制分组并排展示。' },
+  { id: 'robustness', label: '稳健性', detail: '适合多设定对照，突出变量一致性与统计稳定性。' },
+  { id: 'endogeneity', label: '内生性', detail: '适合工具变量、替代解释和识别策略的并列汇报。' },
+]
+
+const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => ({
+  coefficientDigits: 4,
+  statisticDigits: 2,
+  nDigits: 0,
+  r2Digits: 3,
+  parenthesisMode: 't',
+  starLevels: {
+    one: 0.1,
+    two: 0.05,
+    three: 0.01,
+  },
+  missingDisplay: '',
+  booleanDisplay: 'yes-no',
+})
+
+const defaultCustomPublicationConfig = (): CustomPublicationConfig => ({
+  title: '表 1：自定义回归结果',
+  note: buildCustomPublicationNote(defaultCustomPublicationFormatRules()),
+  selectedSourceIds: [],
+  columns: {},
+  columnOrder: [],
+  variableOrder: [],
+  variableLabels: {},
+  hiddenVariableIds: [],
+  statisticOrder: [],
+  statisticLabels: {},
+  disabledStatisticIds: [],
+  formatRules: defaultCustomPublicationFormatRules(),
+})
+
+const normalizeCustomPublicationConfig = (candidate?: Partial<CustomPublicationConfig>): CustomPublicationConfig => {
+  const base = defaultCustomPublicationConfig()
+  return {
+    ...base,
+    ...candidate,
+    columns: candidate?.columns ?? base.columns,
+    columnOrder: candidate?.columnOrder ?? base.columnOrder,
+    variableOrder: candidate?.variableOrder ?? base.variableOrder,
+    variableLabels: candidate?.variableLabels ?? base.variableLabels,
+    hiddenVariableIds: candidate?.hiddenVariableIds ?? base.hiddenVariableIds,
+    statisticOrder: candidate?.statisticOrder ?? base.statisticOrder,
+    statisticLabels: candidate?.statisticLabels ?? base.statisticLabels,
+    disabledStatisticIds: candidate?.disabledStatisticIds ?? base.disabledStatisticIds,
+    formatRules: {
+      ...base.formatRules,
+      ...(candidate?.formatRules ?? {}),
+      starLevels: {
+        ...base.formatRules.starLevels,
+        ...(candidate?.formatRules?.starLevels ?? {}),
+      },
+    },
+  }
+}
+
+const loadCustomPublicationTemplates = () => {
+  try {
+    const stored = window.localStorage.getItem(customPublicationTemplateStorageKey)
+    return stored
+      ? (JSON.parse(stored) as CustomPublicationTemplate[]).map((template) => ({
+          ...template,
+          config: normalizeCustomPublicationConfig(template.config),
+        }))
+      : []
+  } catch {
+    return []
+  }
+}
+
+const loadCustomPublicationDefaultTemplateId = () => {
+  try {
+    return window.localStorage.getItem(customPublicationDefaultTemplateStorageKey) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+const loadCustomPublicationDraft = () => {
+  try {
+    const stored = window.localStorage.getItem(customPublicationDraftStorageKey)
+    return stored ? normalizeCustomPublicationConfig(JSON.parse(stored) as Partial<CustomPublicationConfig>) : defaultCustomPublicationConfig()
+  } catch {
+    return defaultCustomPublicationConfig()
+  }
+}
+
+const moveOrderedItem = (items: string[], id: string, toIndex: number) => {
+  const index = items.indexOf(id)
+  if (index === -1 || toIndex < 0 || toIndex >= items.length || index === toIndex) return items
+  const next = [...items]
+  const [item] = next.splice(index, 1)
+  next.splice(toIndex, 0, item)
+  return next
+}
+
+const isDefaultCustomPublicationConfig = (config: CustomPublicationConfig) => JSON.stringify(config) === JSON.stringify(defaultCustomPublicationConfig())
 
 const loadSnapshots = () => {
   try {
@@ -871,12 +1031,11 @@ function App() {
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState('')
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
-  const [customPublicationConfig, setCustomPublicationConfig] = useState<CustomPublicationConfig>({
-    title: '表 1：自定义回归结果',
-    note: '注：稳健标准误；括号内为 t 值；* p<0.1，** p<0.05，*** p<0.01',
-    selectedSourceIds: [],
-    columns: {},
-  })
+  const [customPublicationConfig, setCustomPublicationConfig] = useState<CustomPublicationConfig>(loadCustomPublicationDraft)
+  const [customPublicationTemplates, setCustomPublicationTemplates] = useState<CustomPublicationTemplate[]>(loadCustomPublicationTemplates)
+  const [customPublicationDefaultTemplateId, setCustomPublicationDefaultTemplateId] = useState(loadCustomPublicationDefaultTemplateId)
+  const [draggingPublicationItem, setDraggingPublicationItem] = useState<CustomPublicationDragItem | null>(null)
+  const [workspaceModeOverride, setWorkspaceModeOverride] = useState<null | 'publication'>(null)
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(Boolean(initialLayout.historyCollapsed))
   const [modelUsage, setModelUsage] = useState<ModelUsageMap>(loadModelUsage)
   const [snapshots, setSnapshots] = useState<WorkbenchSnapshot[]>(loadSnapshots)
@@ -1022,6 +1181,30 @@ function App() {
     }
   }, [modelUsage])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(customPublicationTemplateStorageKey, JSON.stringify(customPublicationTemplates))
+    } catch {
+      // Template persistence is best-effort and should not block export.
+    }
+  }, [customPublicationTemplates])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(customPublicationDefaultTemplateStorageKey, customPublicationDefaultTemplateId)
+    } catch {
+      // Default template persistence is best-effort.
+    }
+  }, [customPublicationDefaultTemplateId])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(customPublicationDraftStorageKey, JSON.stringify(customPublicationConfig))
+    } catch {
+      // Draft persistence is best-effort and should not block export.
+    }
+  }, [customPublicationConfig])
+
   const sanitizedConfig = useMemo(
     () => activeModel.sanitizeConfig(modelConfig, eligibleFeatureColumns, numericColumns),
     [activeModel, eligibleFeatureColumns, modelConfig, numericColumns],
@@ -1164,7 +1347,100 @@ function App() {
     [customPublicationConfig.selectedSourceIds, publicationSources],
   )
   const customPublicationSelectedSet = useMemo(() => new Set(effectiveCustomPublicationSourceIds), [effectiveCustomPublicationSourceIds])
+  const selectedPublicationSources = useMemo(
+    () => {
+      const selected = publicationSources.filter((source) => customPublicationSelectedSet.has(source.id))
+      const byId = new Map(selected.map((source) => [source.id, source]))
+      const ordered: CustomPublicationSource[] = []
+      customPublicationConfig.columnOrder.forEach((id) => {
+        const source = byId.get(id)
+        if (source) {
+          ordered.push(source)
+          byId.delete(id)
+        }
+      })
+      byId.forEach((source) => ordered.push(source))
+      return ordered
+    },
+    [customPublicationConfig.columnOrder, customPublicationSelectedSet, publicationSources],
+  )
+  const customPublicationVariableOptions = useMemo(() => {
+    const byId = new Map<string, { id: string; label: string }>()
+    selectedPublicationSources.forEach((source) => {
+      const coefficientTable = source.result.tables.find((table) => table.id === 'coefficients')
+      coefficientTable?.rows.forEach((row) => {
+        const rawId = String(row.term ?? row.variable ?? '').trim()
+        if (!rawId) return
+        const label = customPublicationConfig.variableLabels[rawId]?.trim() || (rawId === '_cons' ? 'Cons' : rawId)
+        if (!byId.has(rawId)) byId.set(rawId, { id: rawId, label })
+      })
+    })
+    return Array.from(byId.values())
+  }, [customPublicationConfig.variableLabels, selectedPublicationSources])
+  const orderedCustomPublicationVariableOptions = useMemo(() => {
+    const optionMap = new Map(customPublicationVariableOptions.map((option) => [option.id, option]))
+    const ordered: Array<{ id: string; label: string }> = []
+    customPublicationConfig.variableOrder.forEach((id) => {
+      const option = optionMap.get(id)
+      if (option) {
+        ordered.push(option)
+        optionMap.delete(id)
+      }
+    })
+    optionMap.forEach((option) => ordered.push(option))
+    return ordered
+  }, [customPublicationConfig.variableOrder, customPublicationVariableOptions])
+  const hiddenCustomPublicationVariableSet = useMemo(() => new Set(customPublicationConfig.hiddenVariableIds), [customPublicationConfig.hiddenVariableIds])
+  const customPublicationStatisticOptions = useMemo(() => {
+    const rows: Array<{ id: string; label: string; detail: string }> = []
+    if (selectedPublicationSources.length === 0) return rows
+
+    rows.push({
+      id: 'controls',
+      label: customPublicationConfig.statisticLabels.controls?.trim() || 'Controls',
+      detail: '控制变量行，按模型列展示 Yes / 空值',
+    })
+
+    const fixedEffectLabels = new Set<string>()
+    selectedPublicationSources.forEach((source) => {
+      source.dimensions.groupFields.forEach((field) => fixedEffectLabels.add(`${field} FE`))
+      source.dimensions.idFields.forEach((field) => fixedEffectLabels.add(`${field} FE`))
+      if (source.dimensions.timeField) fixedEffectLabels.add(`${source.dimensions.timeField} FE`)
+    })
+    Array.from(fixedEffectLabels).forEach((label) => {
+      rows.push({
+        id: `fe:${label}`,
+        label: customPublicationConfig.statisticLabels[`fe:${label}`]?.trim() || label,
+        detail: '固定效应统计行',
+      })
+    })
+
+    rows.push(
+      { id: 'n', label: customPublicationConfig.statisticLabels.n?.trim() || 'N', detail: '样本量统计行' },
+      { id: 'adj-r2', label: customPublicationConfig.statisticLabels['adj-r2']?.trim() || 'Adj-R²', detail: '调整 R² 统计行' },
+    )
+
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    const ordered: typeof rows = []
+    customPublicationConfig.statisticOrder.forEach((id) => {
+      const row = byId.get(id)
+      if (row) {
+        ordered.push(row)
+        byId.delete(id)
+      }
+    })
+    byId.forEach((row) => ordered.push(row))
+
+    return ordered
+  }, [customPublicationConfig.statisticLabels, customPublicationConfig.statisticOrder, selectedPublicationSources])
+  const disabledCustomPublicationStatisticSet = useMemo(() => new Set(customPublicationConfig.disabledStatisticIds), [customPublicationConfig.disabledStatisticIds])
   const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
+  const customPublicationPreviewTable = hasPublicationSources ? buildCustomPublicationTableFromConfig() : null
+  const customPublicationPreviewHtml = customPublicationPreviewTable ? buildPublicationTableHtml(customPublicationPreviewTable) : ''
+  const matchedCustomPublicationTemplate = useMemo(() => {
+    const currentSignature = JSON.stringify(customPublicationConfig)
+    return customPublicationTemplates.find((template) => JSON.stringify(template.config) === currentSignature) ?? null
+  }, [customPublicationConfig, customPublicationTemplates])
   const primaryDiagnostic = result?.diagnostics.find((diagnostic) => diagnostic.kind === 'actual-vs-fitted')
   const correlationMatrix = result?.diagnostics.find((diagnostic) => diagnostic.kind === 'correlation-matrix')
   const error = uploadError || modelError
@@ -1349,12 +1625,13 @@ function App() {
     if (!result) return '参数已就绪，可以运行模型。'
     return '结果已生成，可以查看结果表、诊断信息或导出 CSV。'
   }, [dataRoles.groupFields.length, dataRoles.idFields.length, dataRoles.timeField, hasDataset, hasStaleResult, isModelRunning, result, runTask?.phase, validationErrors])
-  const workspaceMode = useMemo<'data' | 'model' | 'result' | 'report'>(() => {
+  const workspaceMode = useMemo<'data' | 'model' | 'result' | 'report' | 'publication'>(() => {
     if (!hasDataset) return 'data'
+    if (workspaceModeOverride === 'publication' && result && !isModelRunning) return 'publication'
     if (isExportModalOpen) return 'report'
     if (result && !hasStaleResult && !isModelRunning) return 'result'
     return 'model'
-  }, [hasDataset, hasStaleResult, isExportModalOpen, isModelRunning, result])
+  }, [hasDataset, hasStaleResult, isExportModalOpen, isModelRunning, result, workspaceModeOverride])
   const leadInsight = resultInsights[0] ?? ''
   const secondaryInsights = resultInsights.slice(1)
   const visibleSummaryMetrics = result?.summary.slice(0, 4) ?? []
@@ -1386,6 +1663,8 @@ function App() {
       ? '导入并整理数据'
       : workspaceMode === 'model'
         ? '配置并运行模型'
+        : workspaceMode === 'publication'
+          ? '编辑论文表'
         : workspaceMode === 'report'
           ? '整理并导出结果'
           : '阅读并解释结果'
@@ -1394,6 +1673,8 @@ function App() {
       ? '先导入数据，再设置维度字段和变量角色。'
       : workspaceMode === 'model'
         ? '当前工作区聚焦模型设定，先确认变量和基础参数。'
+        : workspaceMode === 'publication'
+          ? '把来源列、变量行、统计行和注释整理成一张适合导出的论文表。'
         : workspaceMode === 'report'
           ? '选择导出内容和格式，整理本次建模输出。'
           : '先读自然语言结论，再向下查看统计表和补充诊断。'
@@ -2066,12 +2347,8 @@ function App() {
     return table ? publicationTableToRows(table, { includeNotes: true }) : []
   }
 
-  const buildCustomPublicationTableFromConfig = () => {
-    const selectedIds = effectiveCustomPublicationSourceIds
-    const selectedSet = new Set(selectedIds)
-    const sources: CustomPublicationSource[] = publicationSources
-      .filter((source) => selectedSet.has(source.id))
-      .map((source, index) => {
+  function buildCustomPublicationTableFromConfig() {
+    const sources: CustomPublicationSource[] = selectedPublicationSources.map((source, index) => {
         const draft = customPublicationConfig.columns[source.id]
         return {
           id: source.id,
@@ -2088,11 +2365,36 @@ function App() {
       title: customPublicationConfig.title,
       note: customPublicationConfig.note,
       sources,
+      variableOrder: orderedCustomPublicationVariableOptions
+        .filter((option) => !hiddenCustomPublicationVariableSet.has(option.id))
+        .map((option) => option.id),
+      enabledStatisticIds: customPublicationStatisticOptions
+        .filter((option) => !disabledCustomPublicationStatisticSet.has(option.id))
+        .map((option) => option.id),
+      variableLabels: customPublicationConfig.variableLabels,
+      statisticLabels: customPublicationConfig.statisticLabels,
+      formatRules: customPublicationConfig.formatRules,
     })
   }
 
   const updateCustomPublicationConfig = (patch: Partial<Pick<CustomPublicationConfig, 'title' | 'note'>>) => {
     setCustomPublicationConfig((current) => ({ ...current, ...patch }))
+  }
+
+  const updateCustomPublicationFormatRules = (patch: Partial<CustomPublicationFormatRules>) => {
+    setCustomPublicationConfig((current) => {
+      const nextFormatRules = {
+        ...current.formatRules,
+        ...patch,
+        starLevels: patch.starLevels ? patch.starLevels : current.formatRules.starLevels,
+      }
+      const currentAutoNote = buildCustomPublicationNote(current.formatRules)
+      return {
+        ...current,
+        formatRules: nextFormatRules,
+        note: current.note.trim() === '' || current.note === currentAutoNote ? buildCustomPublicationNote(nextFormatRules) : current.note,
+      }
+    })
   }
 
   const toggleCustomPublicationSource = (sourceId: string) => {
@@ -2121,6 +2423,250 @@ function App() {
     }))
   }
 
+  const moveCustomPublicationColumn = (sourceId: string, direction: 'up' | 'down') => {
+    setCustomPublicationConfig((current) => {
+      const availableIds = selectedPublicationSources.map((source) => source.id)
+      const orderedIds = [
+        ...current.columnOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !current.columnOrder.includes(id)),
+      ]
+      const index = orderedIds.indexOf(sourceId)
+      if (index === -1) return current
+      const nextIndex = direction === 'up' ? index - 1 : index + 1
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
+      return { ...current, columnOrder: moveOrderedItem(orderedIds, sourceId, nextIndex) }
+    })
+  }
+
+  const updateCustomPublicationVariableLabel = (variableId: string, label: string) => {
+    setCustomPublicationConfig((current) => ({
+      ...current,
+      variableLabels: {
+        ...current.variableLabels,
+        [variableId]: label,
+      },
+    }))
+  }
+
+  const toggleCustomPublicationVariable = (variableId: string) => {
+    setCustomPublicationConfig((current) => {
+      const hidden = current.hiddenVariableIds.includes(variableId)
+        ? current.hiddenVariableIds.filter((id) => id !== variableId)
+        : [...current.hiddenVariableIds, variableId]
+      return { ...current, hiddenVariableIds: hidden }
+    })
+  }
+
+  const moveCustomPublicationVariable = (variableId: string, direction: 'up' | 'down') => {
+    setCustomPublicationConfig((current) => {
+      const availableIds = customPublicationVariableOptions.map((option) => option.id)
+      const orderedIds = [
+        ...current.variableOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !current.variableOrder.includes(id)),
+      ]
+      const index = orderedIds.indexOf(variableId)
+      if (index === -1) return current
+      const nextIndex = direction === 'up' ? index - 1 : index + 1
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
+      return { ...current, variableOrder: moveOrderedItem(orderedIds, variableId, nextIndex) }
+    })
+  }
+
+  const moveCustomPublicationStatistic = (statisticId: string, direction: 'up' | 'down') => {
+    setCustomPublicationConfig((current) => {
+      const availableIds = customPublicationStatisticOptions.map((option) => option.id)
+      const orderedIds = [
+        ...current.statisticOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !current.statisticOrder.includes(id)),
+      ]
+      const index = orderedIds.indexOf(statisticId)
+      if (index === -1) return current
+      const nextIndex = direction === 'up' ? index - 1 : index + 1
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
+      return { ...current, statisticOrder: moveOrderedItem(orderedIds, statisticId, nextIndex) }
+    })
+  }
+
+  const updateCustomPublicationStatisticLabel = (statisticId: string, label: string) => {
+    setCustomPublicationConfig((current) => ({
+      ...current,
+      statisticLabels: {
+        ...current.statisticLabels,
+        [statisticId]: label,
+      },
+    }))
+  }
+
+  const toggleCustomPublicationStatistic = (statisticId: string) => {
+    setCustomPublicationConfig((current) => {
+      const disabled = current.disabledStatisticIds.includes(statisticId)
+        ? current.disabledStatisticIds.filter((id) => id !== statisticId)
+        : [...current.disabledStatisticIds, statisticId]
+      return { ...current, disabledStatisticIds: disabled }
+    })
+  }
+
+  const resetCustomPublicationOrdering = () => {
+    setCustomPublicationConfig((current) => ({
+      ...current,
+      columnOrder: [],
+      variableOrder: [],
+      statisticOrder: [],
+    }))
+  }
+
+  const setAllCustomPublicationVariables = (visible: boolean) => {
+    setCustomPublicationConfig((current) => ({
+      ...current,
+      hiddenVariableIds: visible ? [] : orderedCustomPublicationVariableOptions.map((option) => option.id),
+    }))
+  }
+
+  const setAllCustomPublicationStatistics = (enabled: boolean) => {
+    setCustomPublicationConfig((current) => ({
+      ...current,
+      disabledStatisticIds: enabled ? [] : customPublicationStatisticOptions.map((option) => option.id),
+    }))
+  }
+
+  const applyCustomPublicationPreset = (preset: CustomPublicationPresetId) => {
+    setCustomPublicationConfig((current) => {
+      const next = structuredClone(current)
+      next.note = buildCustomPublicationNote(next.formatRules)
+      if (preset === 'baseline') {
+        next.title = '表 1：基准回归结果'
+        next.disabledStatisticIds = []
+        next.statisticOrder = Array.from(
+          new Set(['controls', ...customPublicationStatisticOptions.filter((option) => option.id.startsWith('fe:')).map((option) => option.id), 'n', 'adj-r2']),
+        )
+        next.formatRules.booleanDisplay = 'yes-no'
+        next.formatRules.parenthesisMode = 't'
+      } else if (preset === 'heterogeneity') {
+        next.title = '表：异质性分析'
+        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
+        next.formatRules.booleanDisplay = 'yes-blank'
+      } else if (preset === 'robustness') {
+        next.title = '表：稳健性检验结果'
+        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
+        next.formatRules.coefficientDigits = 4
+        next.formatRules.statisticDigits = 2
+      } else if (preset === 'endogeneity') {
+        next.title = '表：内生性检验'
+        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
+        next.formatRules.parenthesisMode = 't'
+      }
+      next.note = buildCustomPublicationNote(next.formatRules)
+      return next
+    })
+  }
+
+  const saveCustomPublicationTemplate = () => {
+    const name = customPublicationConfig.title.trim() || `自定义论文表模板 ${customPublicationTemplates.length + 1}`
+    const template: CustomPublicationTemplate = {
+      id: crypto.randomUUID(),
+      name,
+      updatedAt: new Date().toISOString(),
+      config: structuredClone(customPublicationConfig),
+    }
+    setCustomPublicationTemplates((current) => [template, ...current.filter((entry) => entry.name !== name)])
+  }
+
+  const restoreCustomPublicationDefaults = () => {
+    setCustomPublicationConfig((current) => ({
+      ...defaultCustomPublicationConfig(),
+      selectedSourceIds: current.selectedSourceIds,
+      columns: current.columns,
+      columnOrder: current.columnOrder,
+    }))
+  }
+
+  const ensureCustomPublicationDraftReady = () => {
+    if (customPublicationDefaultTemplateId && isDefaultCustomPublicationConfig(customPublicationConfig)) {
+      applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
+    }
+  }
+
+  const openPublicationWorkbench = () => {
+    if (!result) return
+    ensureCustomPublicationDraftReady()
+    setIsExportModalOpen(false)
+    setWorkspaceModeOverride('publication')
+  }
+
+  const closePublicationWorkbench = () => {
+    setWorkspaceModeOverride(null)
+  }
+
+  const applyCustomPublicationTemplate = (templateId: string) => {
+    const template = customPublicationTemplates.find((entry) => entry.id === templateId)
+    if (!template) return
+    setCustomPublicationConfig(normalizeCustomPublicationConfig(structuredClone(template.config)))
+  }
+
+  const applyDefaultCustomPublicationTemplate = () => {
+    if (customPublicationDefaultTemplateId) applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
+  }
+
+  const duplicateCustomPublicationTemplate = (templateId: string) => {
+    const template = customPublicationTemplates.find((entry) => entry.id === templateId)
+    if (!template) return
+    setCustomPublicationTemplates((current) => [
+      {
+        ...template,
+        id: crypto.randomUUID(),
+        name: `${template.name}（副本）`,
+        updatedAt: new Date().toISOString(),
+      },
+      ...current,
+    ])
+  }
+
+  const renameCustomPublicationTemplate = (templateId: string, name: string) => {
+    setCustomPublicationTemplates((current) =>
+      current.map((entry) => (entry.id === templateId ? { ...entry, name, updatedAt: new Date().toISOString() } : entry)),
+    )
+  }
+
+  const deleteCustomPublicationTemplate = (templateId: string) => {
+    setCustomPublicationTemplates((current) => current.filter((entry) => entry.id !== templateId))
+    if (customPublicationDefaultTemplateId === templateId) setCustomPublicationDefaultTemplateId('')
+  }
+
+  const reorderCustomPublicationByDrop = (kind: CustomPublicationDragItem['kind'], targetId: string) => {
+    if (!draggingPublicationItem || draggingPublicationItem.kind !== kind || draggingPublicationItem.id === targetId) return
+    if (kind === 'column') {
+      setCustomPublicationConfig((current) => {
+        const availableIds = selectedPublicationSources.map((source) => source.id)
+        const orderedIds = [
+          ...current.columnOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !current.columnOrder.includes(id)),
+        ]
+        return { ...current, columnOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+      })
+    }
+    if (kind === 'variable') {
+      setCustomPublicationConfig((current) => {
+        const availableIds = orderedCustomPublicationVariableOptions.map((option) => option.id)
+        const orderedIds = [
+          ...current.variableOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !current.variableOrder.includes(id)),
+        ]
+        return { ...current, variableOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+      })
+    }
+    if (kind === 'statistic') {
+      setCustomPublicationConfig((current) => {
+        const availableIds = customPublicationStatisticOptions.map((option) => option.id)
+        const orderedIds = [
+          ...current.statisticOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !current.statisticOrder.includes(id)),
+        ]
+        return { ...current, statisticOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+      })
+    }
+    setDraggingPublicationItem(null)
+  }
+
   const buildStataStyleTable = (selectedIds = getExportSelection()) => {
     if (!result || !selectedIds.includes('stata')) return ''
     const coefficientTable = result.tables.find((table) => table.id === 'coefficients')
@@ -2136,22 +2682,37 @@ function App() {
     return `<h2>Stata 风格回归表</h2><table><thead><tr><th>Variable</th><th>Coef.</th><th>Std. err.</th><th>P>|t|</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
   }
 
-  const buildPublicationTableHtml = (table: PublicationTable) => {
-    const publicationRows = publicationTableToRows(table, { includeNotes: true })
-    const note = publicationRows.at(-1)?.[0] ?? ''
-    const rows = publicationRows
-      .slice(0, -1)
+  function buildPublicationTableHtml(table: PublicationTable) {
+    const mergeMap = new Map(table.merges.map((merge) => [`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan]))
+    const hiddenCells = new Set<string>()
+    table.merges.forEach((merge) => {
+      for (let offset = 1; offset < merge.columnSpan; offset += 1) hiddenCells.add(`${merge.rowIndex}:${merge.columnIndex + offset}`)
+    })
+    const rows = table.rows
       .map((row, rowIndex) => {
-        const cells = row.map((cell, cellIndex) => {
-          const role = table.rows[rowIndex]?.role
-          const tag = role === 'title' || role === 'model' || role === 'header' ? 'th' : 'td'
-          return `<${tag}${cellIndex === 0 ? ' class="row-label"' : ''}>${escapeXml(cell)}</${tag}>`
-        })
-        return `<tr>${cells.join('')}</tr>`
+        const values = [row.label, ...row.values]
+        const cells = values
+          .map((cell, cellIndex) => {
+            if (hiddenCells.has(`${rowIndex}:${cellIndex}`)) return ''
+            const tag = row.role === 'title' || row.role === 'model' || row.role === 'header' ? 'th' : 'td'
+            const classNames = [
+              cellIndex === 0 ? 'row-label' : '',
+              `row-role-${row.role}`,
+              row.role === 'statistic' && cellIndex === 0 ? 'is-empty-label' : '',
+              cellIndex > 0 && row.role !== 'coefficient' && row.role !== 'statistic' ? 'is-centered' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+            const span = mergeMap.get(`${rowIndex}:${cellIndex}`)
+            return `<${tag}${classNames ? ` class="${classNames}"` : ''}${span ? ` colspan="${span}"` : ''}>${escapeXml(cell)}</${tag}>`
+          })
+          .join('')
+        return `<tr class="row-role-${row.role}">${cells}</tr>`
       })
       .join('')
 
-    return `<h2>${escapeXml(table.title)}</h2><table class="three-line"><tbody>${rows}</tbody></table><p class="note">${escapeXml(note)}</p>`
+    const note = table.notes.join(' ')
+    return `<figure class="publication-block"><table class="three-line publication-table"><tbody>${rows}</tbody></table><figcaption class="note">${escapeXml(note)}</figcaption></figure>`
   }
 
   const buildThreeLineTable = (selectedIds = getExportSelection()) => {
@@ -2189,7 +2750,7 @@ function App() {
         : ''
 
     return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(activeModel.name)} 报告</title><style>
-body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{font-size:22px}h2{font-size:16px;margin-top:22px}table{border-collapse:collapse;width:100%;margin:8px 0 14px}th,td{border:1px solid #d9ddd6;padding:6px 8px;font-size:12px;text-align:left}th{background:#f4f6f2}.three-line th,.three-line td{border-left:0;border-right:0;text-align:center}.three-line .row-label{text-align:left}.three-line tr:last-child td{border-bottom:2px solid #1a1f26}.note{margin-top:-6px;font-size:12px;color:#66706b}code{white-space:pre-wrap}
+body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28px;line-height:1.65}h1{font-size:22px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;margin:8px 0 14px}th,td{border:1px solid #d9ddd6;padding:6px 8px;font-size:12px;text-align:left}th{background:#f4f6f2}.publication-block{margin:20px 0 28px}.publication-table{margin:0}.three-line th,.three-line td{border-left:0;border-right:0;text-align:center;padding:4px 8px}.three-line .row-label{text-align:left}.three-line .is-empty-label{color:transparent}.three-line tr.row-role-title th{border-top:2px solid #1a1f26;border-bottom:0;font-size:16px;font-weight:700;background:#fff;padding:0 0 6px}.three-line tr.row-role-model th{border-top:0;border-bottom:0;background:#fff;font-weight:400;padding-top:1px;padding-bottom:1px}.three-line tr.row-role-header th{border-top:0;border-bottom:1px solid #1a1f26;background:#fff;font-weight:400}.three-line tr.row-role-coefficient td:first-child{font-weight:600}.three-line tr.row-role-statistic td{padding-top:0;color:#4b5563;font-size:11px}.three-line tr.row-role-metric td,.three-line tr.row-role-fixedEffect td{background:#fafaf7}.three-line tr:last-child td{border-bottom:2px solid #1a1f26}.three-line .is-centered{text-align:center}.note{margin-top:8px;padding-top:6px;border-top:1px solid rgba(26,31,38,0.12);font-size:12px;color:#66706b}code{white-space:pre-wrap}
 </style></head><body><h1>${escapeXml(activeModel.name)}（${escapeXml(activeModel.shortName)}）</h1><p><strong>公式：</strong><code>${escapeXml(activeModel.getFormula(sanitizedConfig))}</code></p><p><strong>可信度：</strong>${escapeXml(modelMaturity.label)} · ${escapeXml(modelMaturity.description)}</p>${summaryRows}${buildStataStyleTable(selectedIds)}${buildThreeLineTable(selectedIds)}${customPublicationHtml}${tableHtml}${logRows}${configBlock}</body></html>`
   }
 
@@ -2245,16 +2806,30 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
           if (hiddenCells.has(`${rowIndex}:${columnIndex}`)) return null
           const role = rowIndex < table.rows.length ? table.rows[rowIndex].role : 'note'
           const isHeader = role === 'title' || role === 'model' || role === 'header'
+          const isStatistic = role === 'statistic'
+          const isMetric = role === 'metric' || role === 'fixedEffect'
+          const isNote = role === 'note'
           const isLastTableRow = rowIndex === table.rows.length - 1
+          const isTitleRow = role === 'title'
+          const isHeaderRow = role === 'header'
+          const isModelRow = role === 'model'
+          const isCoefficientLabel = role === 'coefficient' && columnIndex === 0
           return excelCell(cell, {
             fontFamily: 'Times New Roman',
-            fontSize: 11,
-            fontWeight: isHeader ? 'bold' : undefined,
-            align: role === 'title' || columnIndex > 0 ? 'center' : 'left',
+            fontSize: isTitleRow ? 12 : isNote ? 10 : 11,
+            fontWeight: isHeader || isCoefficientLabel ? 'bold' : undefined,
+            align: isTitleRow || isModelRow || columnIndex > 0 ? 'center' : 'left',
             wrap: true,
             columnSpan: mergeStarts.get(`${rowIndex}:${columnIndex}`),
-            topBorderStyle: role === 'title' || role === 'header' ? 'thin' : undefined,
-            bottomBorderStyle: isLastTableRow ? 'medium' : role === 'title' || role === 'header' ? 'thin' : undefined,
+            backgroundColor: isHeader ? '#ffffff' : isMetric ? '#fafaf7' : undefined,
+            topBorderStyle: isTitleRow ? 'medium' : isHeaderRow ? 'thin' : undefined,
+            bottomBorderStyle: isLastTableRow ? 'medium' : isHeaderRow ? 'thin' : isNote ? undefined : 'thin',
+            leftBorderStyle: undefined,
+            rightBorderStyle: undefined,
+            textColor: isStatistic || isNote ? '#66706b' : '#1a1f26',
+            fontStyle: isNote ? 'italic' : undefined,
+            alignVertical: 'center',
+            height: isTitleRow ? 24 : isModelRow ? 16 : isNote ? 18 : isStatistic ? 15 : 18,
           })
         }),
       )
@@ -2275,10 +2850,18 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
     }
     const appendPublicationSheet = (table: PublicationTable) => {
       const columnCount = table.columns.length + 1
+      const labelWidth = Math.min(26, Math.max(18, Math.max(...table.rows.map((row) => row.label.length), 10) * 1.45))
+      const valueWidth = Math.min(
+        18,
+        Math.max(
+          11,
+          ...table.rows.flatMap((row) => row.values.map((value) => String(value ?? '').length * 1.18)),
+        ),
+      )
       sheets.push({
         sheet: worksheetName(table.sheetName),
         data: publicationSheetData(table),
-        columns: Array.from({ length: columnCount }, (_, columnIndex) => ({ width: columnIndex === 0 ? 18 : 13 })),
+        columns: Array.from({ length: columnCount }, (_, columnIndex) => ({ width: columnIndex === 0 ? labelWidth : valueWidth })),
         showGridLines: false,
       })
     }
@@ -2393,7 +2976,13 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
 
   const toggleExportItem = (id: string) => {
     setExportError('')
-    setSelectedExportItemIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))
+    setSelectedExportItemIds((current) => {
+      const next = current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
+      if (id === 'custom-publication' && !current.includes(id) && customPublicationDefaultTemplateId && isDefaultCustomPublicationConfig(customPublicationConfig)) {
+        applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
+      }
+      return next
+    })
   }
 
   const selectAllExportItems = () => {
@@ -2543,6 +3132,335 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
       </div>
     )
   }
+
+  const visiblePublicationVariableCount = orderedCustomPublicationVariableOptions.filter((option) => !hiddenCustomPublicationVariableSet.has(option.id)).length
+  const enabledPublicationStatisticCount = customPublicationStatisticOptions.filter((option) => !disabledCustomPublicationStatisticSet.has(option.id)).length
+  const publicationTemplateStatus = matchedCustomPublicationTemplate
+    ? `当前使用模板：${matchedCustomPublicationTemplate.name}`
+    : customPublicationDefaultTemplateId
+      ? '当前为草稿状态，可随时应用默认模板'
+      : '当前为未命名草稿'
+
+  const renderCustomPublicationWorkbench = () => (
+    <section className="publication-workbench">
+      <div className="publication-workbench__editor">
+        <section className="publication-workbench__hero">
+          <div>
+            <span className="panel__label">Paper Table Workspace</span>
+            <h2>{customPublicationConfig.title}</h2>
+            <p>把来源列、变量行、统计行和注释整理成一张适合 Excel、Word 和 HTML 导出的论文表。</p>
+          </div>
+          <div className="publication-workbench__hero-actions">
+            <button className="secondary-button is-subtle" type="button" onClick={closePublicationWorkbench}>
+              返回结果区
+            </button>
+            <button className="secondary-button" type="button" onClick={openExportDialog} disabled={!result}>
+              <Download size={14} />
+              打开导出
+            </button>
+          </div>
+        </section>
+
+        <div className="publication-workbench__meta">
+          <span>{selectedPublicationSources.length} 个来源列</span>
+          <span>{visiblePublicationVariableCount} 个显示变量</span>
+          <span>{enabledPublicationStatisticCount} 个统计行</span>
+          <span>{publicationTemplateStatus}</span>
+        </div>
+
+        <div className="custom-publication-panel custom-publication-panel--workspace">
+          <div className="custom-publication-toolbar">
+            <div className="custom-publication-toolbar__group">
+              {customPublicationPresetMeta.map((preset) => (
+                <button className="secondary-button" type="button" key={preset.id} onClick={() => applyCustomPublicationPreset(preset.id)} disabled={isExporting} title={preset.detail}>
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="custom-publication-toolbar__group">
+              <button className="secondary-button" type="button" onClick={resetCustomPublicationOrdering} disabled={isExporting}>
+                恢复默认顺序
+              </button>
+              <button className="secondary-button" type="button" onClick={restoreCustomPublicationDefaults} disabled={isExporting}>
+                恢复默认规则
+              </button>
+              <button className="secondary-button" type="button" onClick={saveCustomPublicationTemplate} disabled={isExporting}>
+                保存模板
+              </button>
+              <button className="secondary-button" type="button" onClick={applyDefaultCustomPublicationTemplate} disabled={isExporting || !customPublicationDefaultTemplateId}>
+                应用默认模板
+              </button>
+            </div>
+          </div>
+
+          <div className="custom-publication-fields">
+            <label>
+              <span>表名</span>
+              <input value={customPublicationConfig.title} disabled={isExporting} onChange={(event) => updateCustomPublicationConfig({ title: event.target.value })} />
+            </label>
+            <label>
+              <span>注释</span>
+              <textarea value={customPublicationConfig.note} disabled={isExporting} rows={3} onChange={(event) => updateCustomPublicationConfig({ note: event.target.value })} />
+            </label>
+          </div>
+
+          <div className="custom-publication-settings-grid">
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>列与多级表头</strong>
+                <span>选择当前结果和历史结果作为列来源，并设置一级分组、列名与模型行。</span>
+              </div>
+              <div className="custom-publication-source-list custom-publication-source-list--workspace">
+                {publicationSources.length === 0 ? (
+                  <div className="empty-history">暂无可用结果。运行模型或保存带结果的历史记录后可联合导出。</div>
+                ) : (
+                  [...selectedPublicationSources, ...publicationSources.filter((source) => !customPublicationSelectedSet.has(source.id))].map((source, sourceIndex) => {
+                    const draft = customPublicationConfig.columns[source.id] ?? {
+                      id: source.id,
+                      label: `(${sourceIndex + 1})`,
+                      group: '',
+                      modelLabel: source.modelName,
+                    }
+                    const selectedIndex = selectedPublicationSources.findIndex((entry) => entry.id === source.id)
+                    return (
+                      <div
+                        className={`custom-publication-source ${customPublicationSelectedSet.has(source.id) ? 'is-selected' : ''}`}
+                        key={source.id}
+                        draggable={customPublicationSelectedSet.has(source.id)}
+                        onDragStart={() => setDraggingPublicationItem({ kind: 'column', id: source.id })}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => reorderCustomPublicationByDrop('column', source.id)}
+                        onDragEnd={() => setDraggingPublicationItem(null)}
+                      >
+                        <label className="custom-publication-source__check">
+                          <input type="checkbox" checked={customPublicationSelectedSet.has(source.id)} disabled={isExporting} onChange={() => toggleCustomPublicationSource(source.id)} />
+                          <span>
+                            <strong>{source.label}</strong>
+                            <small>{source.formula}</small>
+                          </span>
+                        </label>
+                        <div className="custom-publication-source__fields">
+                          <input value={draft.group} placeholder="一级表头分组" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { group: event.target.value })} />
+                          <input value={draft.label} placeholder="列名，如 (1)" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { label: event.target.value })} />
+                          <input value={draft.modelLabel} placeholder="模型行，如 Fe" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { modelLabel: event.target.value })} />
+                        </div>
+                        {customPublicationSelectedSet.has(source.id) ? (
+                          <div className="custom-publication-source__actions">
+                            <button className="secondary-button" type="button" disabled={isExporting || selectedIndex <= 0} onClick={() => moveCustomPublicationColumn(source.id, 'up')}>
+                              上移
+                            </button>
+                            <button className="secondary-button" type="button" disabled={isExporting || selectedIndex === -1 || selectedIndex >= selectedPublicationSources.length - 1} onClick={() => moveCustomPublicationColumn(source.id, 'down')}>
+                              下移
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>显示规则</strong>
+                <span>控制数字位数、括号统计、星号阈值以及缺失/布尔展示方式。</span>
+              </div>
+              <div className="custom-publication-format-grid">
+                <label><span>系数小数位</span><input type="number" min="0" max="8" value={customPublicationConfig.formatRules.coefficientDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ coefficientDigits: Number(event.target.value) })} /></label>
+                <label><span>括号统计小数位</span><input type="number" min="0" max="8" value={customPublicationConfig.formatRules.statisticDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ statisticDigits: Number(event.target.value) })} /></label>
+                <label><span>N 小数位</span><input type="number" min="0" max="4" value={customPublicationConfig.formatRules.nDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ nDigits: Number(event.target.value) })} /></label>
+                <label><span>Adj-R² 小数位</span><input type="number" min="0" max="6" value={customPublicationConfig.formatRules.r2Digits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ r2Digits: Number(event.target.value) })} /></label>
+                <label>
+                  <span>括号统计</span>
+                  <select value={customPublicationConfig.formatRules.parenthesisMode} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ parenthesisMode: event.target.value as CustomPublicationFormatRules['parenthesisMode'] })}>
+                    <option value="t">t 值</option>
+                    <option value="z">z 值</option>
+                    <option value="stdError">标准误</option>
+                  </select>
+                </label>
+                <label>
+                  <span>缺失显示</span>
+                  <select value={customPublicationConfig.formatRules.missingDisplay} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ missingDisplay: event.target.value as CustomPublicationFormatRules['missingDisplay'] })}>
+                    <option value="">空白</option>
+                    <option value="-">-</option>
+                    <option value="/">/</option>
+                  </select>
+                </label>
+                <label>
+                  <span>布尔显示</span>
+                  <select value={customPublicationConfig.formatRules.booleanDisplay} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ booleanDisplay: event.target.value as CustomPublicationFormatRules['booleanDisplay'] })}>
+                    <option value="yes-no">Yes / No</option>
+                    <option value="yes-blank">Yes / 空白</option>
+                    <option value="check">勾选语义</option>
+                  </select>
+                </label>
+                <label><span>* 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.one} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, one: Number(event.target.value) } })} /></label>
+                <label><span>** 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.two} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, two: Number(event.target.value) } })} /></label>
+                <label><span>*** 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.three} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, three: Number(event.target.value) } })} /></label>
+              </div>
+            </section>
+          </div>
+
+          <div className="custom-publication-editor-grid">
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>变量行</strong>
+                <span>勾选显示项，支持重命名、按钮排序和拖拽排序。</span>
+              </div>
+              <div className="custom-publication-editor__toolbar">
+                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationVariables(true)} disabled={isExporting}>全选</button>
+                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationVariables(false)} disabled={isExporting}>全不选</button>
+              </div>
+              <div className="custom-publication-row-list custom-publication-row-list--workspace">
+                {orderedCustomPublicationVariableOptions.length === 0 ? (
+                  <div className="empty-history">先选择至少一个包含回归结果的来源列。</div>
+                ) : (
+                  orderedCustomPublicationVariableOptions.map((option, index) => {
+                    const isVisible = !hiddenCustomPublicationVariableSet.has(option.id)
+                    return (
+                      <div className={`custom-publication-row ${isVisible ? 'is-selected' : ''}`} key={option.id} draggable onDragStart={() => setDraggingPublicationItem({ kind: 'variable', id: option.id })} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCustomPublicationByDrop('variable', option.id)} onDragEnd={() => setDraggingPublicationItem(null)}>
+                        <label className="custom-publication-row__check">
+                          <input type="checkbox" checked={isVisible} disabled={isExporting} onChange={() => toggleCustomPublicationVariable(option.id)} />
+                          <span><strong>{option.label}</strong><small>{option.id}</small></span>
+                        </label>
+                        <input className="custom-publication-row__rename" value={customPublicationConfig.variableLabels[option.id] ?? option.label} disabled={isExporting} onChange={(event) => updateCustomPublicationVariableLabel(option.id, event.target.value)} />
+                        <div className="custom-publication-row__actions">
+                          <button className="secondary-button" type="button" disabled={isExporting || index === 0} onClick={() => moveCustomPublicationVariable(option.id, 'up')}>上移</button>
+                          <button className="secondary-button" type="button" disabled={isExporting || index === orderedCustomPublicationVariableOptions.length - 1} onClick={() => moveCustomPublicationVariable(option.id, 'down')}>下移</button>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>统计行</strong>
+                <span>自由开关、重命名，并支持按钮排序和拖拽排序。</span>
+              </div>
+              <div className="custom-publication-editor__toolbar">
+                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationStatistics(true)} disabled={isExporting}>全开</button>
+                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationStatistics(false)} disabled={isExporting}>全关</button>
+              </div>
+              <div className="custom-publication-row-list custom-publication-row-list--workspace">
+                {customPublicationStatisticOptions.length === 0 ? (
+                  <div className="empty-history">选择结果列后，这里会出现可配置的统计行。</div>
+                ) : (
+                  customPublicationStatisticOptions.map((option, index) => {
+                    const isEnabled = !disabledCustomPublicationStatisticSet.has(option.id)
+                    return (
+                      <div className={`custom-publication-row ${isEnabled ? 'is-selected' : ''}`} key={option.id} draggable onDragStart={() => setDraggingPublicationItem({ kind: 'statistic', id: option.id })} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCustomPublicationByDrop('statistic', option.id)} onDragEnd={() => setDraggingPublicationItem(null)}>
+                        <div className="custom-publication-row__check">
+                          <input type="checkbox" checked={isEnabled} disabled={isExporting} onChange={() => toggleCustomPublicationStatistic(option.id)} />
+                          <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+                        </div>
+                        <input className="custom-publication-row__rename" value={customPublicationConfig.statisticLabels[option.id] ?? option.label} disabled={isExporting} onChange={(event) => updateCustomPublicationStatisticLabel(option.id, event.target.value)} />
+                        <div className="custom-publication-row__actions">
+                          <button className="secondary-button" type="button" disabled={isExporting || index === 0} onClick={() => moveCustomPublicationStatistic(option.id, 'up')}>上移</button>
+                          <button className="secondary-button" type="button" disabled={isExporting || index === customPublicationStatisticOptions.length - 1} onClick={() => moveCustomPublicationStatistic(option.id, 'down')}>下移</button>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+          </div>
+
+          <div className="custom-publication-preview-grid">
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>内置预设</strong>
+                <span>先套一个常见论文结构，再按变量、统计行和列头精调，会更省力。</span>
+              </div>
+              <div className="custom-publication-preset-list">
+                {customPublicationPresetMeta.map((preset) => (
+                  <div className="custom-publication-preset" key={preset.id}>
+                    <div><strong>{preset.label}</strong><small>{preset.detail}</small></div>
+                    <button className="secondary-button" type="button" onClick={() => applyCustomPublicationPreset(preset.id)} disabled={isExporting}>套用</button>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="custom-publication-editor">
+              <div className="custom-publication-editor__header">
+                <strong>模板</strong>
+                <span>保存、套用、复制、删除，并设置默认模板。</span>
+              </div>
+              <div className="custom-publication-template-list">
+                {customPublicationTemplates.length === 0 ? (
+                  <div className="empty-history">还没有保存的模板。</div>
+                ) : (
+                  customPublicationTemplates.map((template) => (
+                    <div className={`custom-publication-template ${customPublicationDefaultTemplateId === template.id ? 'is-default' : ''}`} key={template.id}>
+                      <input value={template.name} disabled={isExporting} onChange={(event) => renameCustomPublicationTemplate(template.id, event.target.value)} />
+                      <small>更新于 {new Date(template.updatedAt).toLocaleString()}</small>
+                      <div className="custom-publication-template__actions">
+                        <button className="secondary-button" type="button" onClick={() => applyCustomPublicationTemplate(template.id)} disabled={isExporting}>应用</button>
+                        <button className="secondary-button" type="button" onClick={() => duplicateCustomPublicationTemplate(template.id)} disabled={isExporting}>复制</button>
+                        <button className="secondary-button" type="button" onClick={() => setCustomPublicationDefaultTemplateId(template.id)} disabled={isExporting}>{customPublicationDefaultTemplateId === template.id ? '默认中' : '设默认'}</button>
+                        <button className="secondary-button is-danger" type="button" onClick={() => deleteCustomPublicationTemplate(template.id)} disabled={isExporting}>删除</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div className="publication-workbench__preview">
+        <section className="publication-preview-card">
+          <div className="publication-preview-card__header">
+            <div>
+              <span className="panel__label">Live preview</span>
+              <h2>论文表预览</h2>
+              <p>右侧预览会实时反映列顺序、变量显示、统计行与注释内容。</p>
+            </div>
+            <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
+              导出
+            </button>
+          </div>
+          {customPublicationPreviewTable ? (
+            <div className="publication-preview-card__body">
+              <div className="custom-publication-preview__frame custom-publication-preview__frame--workspace" dangerouslySetInnerHTML={{ __html: customPublicationPreviewHtml }} />
+            </div>
+          ) : (
+            <div className="empty-history">先选择至少一个结果列，右侧会实时生成论文表预览。</div>
+          )}
+        </section>
+      </div>
+    </section>
+  )
+
+  const renderCustomPublicationExportSummary = () => (
+    <div className="custom-publication-summary-card">
+      <div className="custom-publication-summary-card__header">
+        <div>
+          <strong>自定义论文表</strong>
+          <span>复杂编辑已迁移到独立工作台，这里只保留导出摘要。</span>
+        </div>
+        <button className="secondary-button" type="button" onClick={openPublicationWorkbench} disabled={!result}>
+          进入编辑器
+        </button>
+      </div>
+      <div className="custom-publication-summary-card__grid">
+        <div><span>当前表名</span><strong>{customPublicationConfig.title}</strong></div>
+        <div><span>来源列</span><strong>{selectedPublicationSources.length} 个</strong></div>
+        <div><span>变量行</span><strong>{visiblePublicationVariableCount} 个显示</strong></div>
+        <div><span>统计行</span><strong>{enabledPublicationStatisticCount} 个启用</strong></div>
+      </div>
+      <p className="custom-publication-summary-card__footnote">
+        {publicationTemplateStatus}
+        {customPublicationDefaultTemplateId ? ' · 已设置默认模板' : ''}
+      </p>
+    </div>
+  )
 
   return (
     <main className="app-shell">
@@ -2767,6 +3685,11 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                 </div>
                 <div className="workbench-focus__actions">
                   {result ? (
+                    <button className="secondary-button is-subtle" type="button" onClick={openPublicationWorkbench} disabled={!result}>
+                      论文表
+                    </button>
+                  ) : null}
+                  {result ? (
                     <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
                       <Download size={14} />
                       导出结果
@@ -2821,6 +3744,9 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                 ) : null}
               </section>
 
+              {workspaceMode === 'publication' && result ? (
+                renderCustomPublicationWorkbench()
+              ) : (
               <section className="results-workspace">
                 <div className="result-panel result-primary-panel">
                   <div className="result-primary-header">
@@ -2912,189 +3838,191 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                     </div>
                   )}
 
-                  <div className="result-tables">
-                    {result ? <div className="result-tables__label">统计表格</div> : null}
-                    {result ? (
-                      <div className="paper-section-heading paper-section-heading--compact">
-                        <span className="paper-section-heading__index">三</span>
-                        <div>
-                          <strong>系数估计</strong>
-                          <small>Coefficient estimates</small>
+                  <section className="result-reading-body">
+                    <div className="result-tables">
+                      {result ? <div className="result-tables__label">统计表格</div> : null}
+                      {result ? (
+                        <div className="paper-section-heading paper-section-heading--compact">
+                          <span className="paper-section-heading__index">三</span>
+                          <div>
+                            <strong>系数估计</strong>
+                            <small>Coefficient estimates</small>
+                          </div>
                         </div>
-                      </div>
-                    ) : null}
-                    {mainResultTable ? (
-                      <div className="coef-table is-primary" key={mainResultTable.id}>
-                        <div className="table-caption">{mainResultTable.title}</div>
-                        <div
-                          className="coef-table__head"
-                          style={{ gridTemplateColumns: `repeat(${mainResultTable.columns.length}, minmax(${mainResultTable.columns.length > 9 ? 56 : 0}px, 1fr))` }}
-                        >
-                          {mainResultTable.columns.map((column) => (
-                            <span key={column}>{columnLabels[column] ?? column}</span>
-                          ))}
-                        </div>
-                        {mainResultTable.rows.map((row, rowIndex) => (
+                      ) : null}
+                      {mainResultTable ? (
+                        <div className="coef-table is-primary" key={mainResultTable.id}>
+                          <div className="table-caption">{mainResultTable.title}</div>
                           <div
-                            className="coef-table__row"
-                            key={`${row.term ?? row.variable ?? row.source ?? rowIndex}`}
+                            className="coef-table__head"
                             style={{ gridTemplateColumns: `repeat(${mainResultTable.columns.length}, minmax(${mainResultTable.columns.length > 9 ? 56 : 0}px, 1fr))` }}
                           >
-                            {mainResultTable.columns.map((column, columnIndex) => (
-                              <span className={columnIndex === 0 ? 'coef-table__term' : ''} key={column}>
-                                {formatResultValue(row[column] ?? '', column)}
-                              </span>
+                            {mainResultTable.columns.map((column) => (
+                              <span key={column}>{columnLabels[column] ?? column}</span>
                             ))}
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    {mainResultTable ? (
-                      <blockquote className="paper-quote-note paper-quote-note--compact">
-                        <p>“本表优先用于判断变量方向、显著性和区间范围；若用于正式写作，请同步报告模型摘要与估计设定。”</p>
-                        <cite>表注说明</cite>
-                      </blockquote>
-                    ) : null}
-                    {secondaryResultTables.length > 0 ? (
-                      <div className="result-secondary-tables">
-                        {secondaryResultTables.map((table) => (
-                          <div className="coef-table is-secondary" key={table.id}>
-                            <div className="table-caption">
-                              {table.title}
-                              <span>{table.rows.length} 行</span>
-                            </div>
+                          {mainResultTable.rows.map((row, rowIndex) => (
                             <div
-                              className="coef-table__head"
-                              style={{ gridTemplateColumns: `repeat(${table.columns.length}, minmax(${table.columns.length > 8 ? 50 : 0}px, 1fr))` }}
+                              className="coef-table__row"
+                              key={`${row.term ?? row.variable ?? row.source ?? rowIndex}`}
+                              style={{ gridTemplateColumns: `repeat(${mainResultTable.columns.length}, minmax(${mainResultTable.columns.length > 9 ? 56 : 0}px, 1fr))` }}
                             >
-                              {table.columns.map((column) => (
-                                <span key={column}>{columnLabels[column] ?? column}</span>
+                              {mainResultTable.columns.map((column, columnIndex) => (
+                                <span className={columnIndex === 0 ? 'coef-table__term' : ''} key={column}>
+                                  {formatResultValue(row[column] ?? '', column)}
+                                </span>
                               ))}
                             </div>
-                            {table.rows.map((row, rowIndex) => (
+                          ))}
+                        </div>
+                      ) : null}
+                      {mainResultTable ? (
+                        <blockquote className="paper-quote-note paper-quote-note--compact">
+                          <p>"本表优先用于判断变量方向、显著性和区间范围；若用于正式写作，请同步报告模型摘要与估计设定。"</p>
+                          <cite>表注说明</cite>
+                        </blockquote>
+                      ) : null}
+                      {secondaryResultTables.length > 0 ? (
+                        <div className="result-secondary-tables">
+                          {secondaryResultTables.map((table) => (
+                            <div className="coef-table is-secondary" key={table.id}>
+                              <div className="table-caption">
+                                {table.title}
+                                <span>{table.rows.length} 行</span>
+                              </div>
                               <div
-                                className="coef-table__row"
-                                key={`${row.term ?? row.variable ?? row.source ?? row.model ?? rowIndex}`}
+                                className="coef-table__head"
                                 style={{ gridTemplateColumns: `repeat(${table.columns.length}, minmax(${table.columns.length > 8 ? 50 : 0}px, 1fr))` }}
                               >
-                                {table.columns.map((column, columnIndex) => (
-                                  <span className={columnIndex === 0 ? 'coef-table__term' : ''} key={column}>
-                                    {formatResultValue(row[column] ?? '', column)}
-                                  </span>
+                                {table.columns.map((column) => (
+                                  <span key={column}>{columnLabels[column] ?? column}</span>
                                 ))}
                               </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    {!result ? (
-                      <div className="empty-diagnostic">
-                        <Table size={18} />
-                        运行模型后展示回归结果。
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                {result ? (
-                  <section className="result-disclosure">
-                    <button
-                      className={`result-disclosure__toggle ${isDiagnosticsOpen ? 'is-open' : ''}`}
-                      type="button"
-                      onClick={() => setIsDiagnosticsOpen((current) => !current)}
-                    >
-                      <span>诊断与运行日志</span>
-                      <small>{isDiagnosticsOpen ? '收起补充诊断' : '展开补充诊断'}</small>
-                    </button>
-
-                    {isDiagnosticsOpen ? (
-                      <div className="result-disclosure__body">
-                        <div className="paper-section-heading paper-section-heading--compact paper-section-heading--muted">
-                          <span className="paper-section-heading__index">四</span>
-                          <div>
-                            <strong>补充诊断</strong>
-                            <small>Diagnostics and logs</small>
-                          </div>
-                        </div>
-                        <div className="result-support-row">
-                          <div className="result-panel result-diagnostic-card">
-                            <div className="section-title">
-                              <Activity size={18} />
-                              <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
-                            </div>
-                            {primaryDiagnostic ? (
-                              <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
-                                {primaryDiagnostic.actual.map((actual, index) => {
-                                  const maxActual = Math.max(...primaryDiagnostic.actual)
-                                  const maxFitted = Math.max(...primaryDiagnostic.fitted)
-                                  return (
-                                    <span
-                                      key={`${actual}-${index}`}
-                                      style={{
-                                        left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
-                                        bottom: `${(actual / maxActual) * 80 + 8}%`,
-                                      }}
-                                    />
-                                  )
-                                })}
-                              </div>
-                            ) : correlationMatrix ? (
-                              <div
-                                className="correlation-heatmap is-compact"
-                                style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
-                              >
-                                <span />
-                                {correlationMatrix.variables.map((variable) => (
-                                  <strong key={variable}>{variable}</strong>
-                                ))}
-                                {correlationMatrix.matrix.flatMap((row, rowIndex) => [
-                                  <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
-                                    {correlationMatrix.variables[rowIndex]}
-                                  </strong>,
-                                  ...row.map((value, columnIndex) => (
-                                    <span
-                                      key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
-                                      style={{
-                                        backgroundColor:
-                                          value >= 0
-                                            ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
-                                            : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
-                                        color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
-                                      }}
-                                    >
-                                      {formatNumber(value, 2)}
+                              {table.rows.map((row, rowIndex) => (
+                                <div
+                                  className="coef-table__row"
+                                  key={`${row.term ?? row.variable ?? row.source ?? row.model ?? rowIndex}`}
+                                  style={{ gridTemplateColumns: `repeat(${table.columns.length}, minmax(${table.columns.length > 8 ? 50 : 0}px, 1fr))` }}
+                                >
+                                  {table.columns.map((column, columnIndex) => (
+                                    <span className={columnIndex === 0 ? 'coef-table__term' : ''} key={column}>
+                                      {formatResultValue(row[column] ?? '', column)}
                                     </span>
-                                  )),
-                                ])}
-                              </div>
-                            ) : (
-                              <div className="empty-diagnostic is-compact">
-                                <Activity size={18} />
-                                暂无诊断图。
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="result-panel result-log-card">
-                            <div className="section-title">
-                              <Activity size={18} />
-                              <h2>运行日志</h2>
-                            </div>
-                            <div className="run-log is-expanded">
-                              {runLogs.map((entry, index) => (
-                                <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
-                                  {entry.message}
-                                </p>
+                                  ))}
+                                </div>
                               ))}
                             </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {!result ? (
+                        <div className="empty-diagnostic">
+                          <Table size={18} />
+                          运行模型后展示回归结果。
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {result ? (
+                      <section className="result-disclosure">
+                      <button
+                        className={`result-disclosure__toggle ${isDiagnosticsOpen ? 'is-open' : ''}`}
+                        type="button"
+                        onClick={() => setIsDiagnosticsOpen((current) => !current)}
+                      >
+                        <span>诊断与运行日志</span>
+                        <small>{isDiagnosticsOpen ? '收起补充诊断' : '展开补充诊断'}</small>
+                      </button>
+                      {isDiagnosticsOpen ? (
+                        <div className="result-disclosure__body">
+                          <div className="paper-section-heading paper-section-heading--compact paper-section-heading--muted">
+                            <span className="paper-section-heading__index">四</span>
+                            <div>
+                              <strong>补充诊断</strong>
+                              <small>Diagnostics and logs</small>
+                            </div>
+                          </div>
+                          <div className="result-support-row">
+                            <div className="result-panel result-diagnostic-card">
+                              <div className="section-title">
+                                <Activity size={18} />
+                                <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
+                              </div>
+                              {primaryDiagnostic ? (
+                                <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
+                                  {primaryDiagnostic.actual.map((actual, index) => {
+                                    const maxActual = Math.max(...primaryDiagnostic.actual)
+                                    const maxFitted = Math.max(...primaryDiagnostic.fitted)
+                                    return (
+                                      <span
+                                        key={`${actual}-${index}`}
+                                        style={{
+                                          left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
+                                          bottom: `${(actual / maxActual) * 80 + 8}%`,
+                                        }}
+                                      />
+                                    )
+                                  })}
+                                </div>
+                              ) : correlationMatrix ? (
+                                <div
+                                  className="correlation-heatmap is-compact"
+                                  style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
+                                >
+                                  <span />
+                                  {correlationMatrix.variables.map((variable) => (
+                                    <strong key={variable}>{variable}</strong>
+                                  ))}
+                                  {correlationMatrix.matrix.flatMap((row, rowIndex) => [
+                                    <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
+                                      {correlationMatrix.variables[rowIndex]}
+                                    </strong>,
+                                    ...row.map((value, columnIndex) => (
+                                      <span
+                                        key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
+                                        style={{
+                                          backgroundColor:
+                                            value >= 0
+                                              ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
+                                              : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
+                                          color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
+                                        }}
+                                      >
+                                        {formatNumber(value, 2)}
+                                      </span>
+                                    )),
+                                  ])}
+                                </div>
+                              ) : (
+                                <div className="empty-diagnostic is-compact">
+                                  <Activity size={18} />
+                                  暂无诊断图。
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="result-panel result-log-card">
+                              <div className="section-title">
+                                <Activity size={18} />
+                                <h2>运行日志</h2>
+                              </div>
+                              <div className="run-log is-expanded">
+                                {runLogs.map((entry, index) => (
+                                  <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
+                                    {entry.message}
+                                  </p>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      ) : null}
+                      </section>
                     ) : null}
                   </section>
-                ) : null}
+                </div>
               </section>
+              )}
             </>
           )}
         </section>
@@ -3195,6 +4123,44 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                   </span>
                 ))}
               </div>
+              <button className="secondary-button is-full" type="button" onClick={openPublicationWorkbench} disabled={!result}>
+                进入论文表工作台
+              </button>
+              <button className="secondary-button is-subtle is-full" type="button" onClick={openExportDialog} disabled={!result}>
+                <Download size={14} />
+                选择导出内容
+              </button>
+            </section>
+          ) : null}
+
+          {workspaceMode === 'publication' && result ? (
+            <section className="context-panel-card">
+              <div className="parameter-section__header">
+                <strong>论文表上下文</strong>
+                <span>这里聚焦当前草稿、来源列和模板状态。</span>
+              </div>
+              <div className="context-mini-list">
+                <div>
+                  <span>表名</span>
+                  <strong>{customPublicationConfig.title}</strong>
+                </div>
+                <div>
+                  <span>来源列</span>
+                  <strong>{selectedPublicationSources.length} 个</strong>
+                </div>
+                <div>
+                  <span>模板状态</span>
+                  <strong>{matchedCustomPublicationTemplate?.name ?? '草稿编辑中'}</strong>
+                </div>
+                <div>
+                  <span>统计行</span>
+                  <strong>{enabledPublicationStatisticCount} 个启用</strong>
+                </div>
+              </div>
+              <p className="context-panel-card__footnote">{publicationTemplateStatus}</p>
+              <button className="secondary-button is-full" type="button" onClick={closePublicationWorkbench}>
+                返回结果区
+              </button>
               <button className="secondary-button is-subtle is-full" type="button" onClick={openExportDialog} disabled={!result}>
                 <Download size={14} />
                 选择导出内容
@@ -3228,7 +4194,7 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
             </div>
           ) : null}
 
-          {activeModel.parameterSchema ? (
+          {workspaceMode !== 'publication' && activeModel.parameterSchema ? (
             <div className="parameter-schema">
               {primaryParameterSections.map((section) => (
                 <section className="parameter-section" key={section.id}>
@@ -3240,7 +4206,7 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                 </section>
               ))}
             </div>
-          ) : activeModel.requiresTarget ? (
+          ) : workspaceMode !== 'publication' && activeModel.requiresTarget ? (
             <section className="parameter-section">
               <div className="parameter-section__header">
                 <strong>模型字段</strong>
@@ -3742,83 +4708,7 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                   ))}
                 </div>
 
-                {customPublicationEnabled ? (
-                  <div className="custom-publication-panel">
-                    <div className="custom-publication-panel__header">
-                      <strong>自定义论文表</strong>
-                      <span>从当前结果和已保存历史结果中选择列，设置分组、列名和注释。</span>
-                    </div>
-                    <div className="custom-publication-fields">
-                      <label>
-                        <span>表名</span>
-                        <input
-                          value={customPublicationConfig.title}
-                          disabled={isExporting}
-                          onChange={(event) => updateCustomPublicationConfig({ title: event.target.value })}
-                        />
-                      </label>
-                      <label>
-                        <span>注释</span>
-                        <textarea
-                          value={customPublicationConfig.note}
-                          disabled={isExporting}
-                          rows={2}
-                          onChange={(event) => updateCustomPublicationConfig({ note: event.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <div className="custom-publication-source-list">
-                      {publicationSources.length === 0 ? (
-                        <div className="empty-history">暂无可用结果。运行模型或保存带结果的历史记录后可联合导出。</div>
-                      ) : (
-                        publicationSources.map((source, sourceIndex) => {
-                          const draft = customPublicationConfig.columns[source.id] ?? {
-                            id: source.id,
-                            label: `(${sourceIndex + 1})`,
-                            group: '',
-                            modelLabel: source.modelName,
-                          }
-                          return (
-                            <div className={`custom-publication-source ${customPublicationSelectedSet.has(source.id) ? 'is-selected' : ''}`} key={source.id}>
-                              <label className="custom-publication-source__check">
-                                <input
-                                  type="checkbox"
-                                  checked={customPublicationSelectedSet.has(source.id)}
-                                  disabled={isExporting}
-                                  onChange={() => toggleCustomPublicationSource(source.id)}
-                                />
-                                <span>
-                                  <strong>{source.label}</strong>
-                                  <small>{source.formula}</small>
-                                </span>
-                              </label>
-                              <div className="custom-publication-source__fields">
-                                <input
-                                  value={draft.group}
-                                  placeholder="一级表头分组"
-                                  disabled={isExporting || !customPublicationSelectedSet.has(source.id)}
-                                  onChange={(event) => updateCustomPublicationColumn(source.id, { group: event.target.value })}
-                                />
-                                <input
-                                  value={draft.label}
-                                  placeholder="列名，如 (1)"
-                                  disabled={isExporting || !customPublicationSelectedSet.has(source.id)}
-                                  onChange={(event) => updateCustomPublicationColumn(source.id, { label: event.target.value })}
-                                />
-                                <input
-                                  value={draft.modelLabel}
-                                  placeholder="模型行，如 Fe"
-                                  disabled={isExporting || !customPublicationSelectedSet.has(source.id)}
-                                  onChange={(event) => updateCustomPublicationColumn(source.id, { modelLabel: event.target.value })}
-                                />
-                              </div>
-                            </div>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                ) : null}
+                {customPublicationEnabled ? renderCustomPublicationExportSummary() : null}
               </section>
             </div>
 
@@ -4008,21 +4898,6 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
               </button>
             </div>
 
-            <div className="modal-summary-strip">
-              <div>
-                <span>数据规模</span>
-                <strong>{rows.length} 行 · {profiles.length} 字段</strong>
-              </div>
-              <div>
-                <span>维度字段</span>
-                <strong>{roleSummary || '尚未设置 ID / Time / Group'}</strong>
-              </div>
-              <div>
-                <span>平衡性</span>
-                <strong>{panelDiagnosis.title}</strong>
-              </div>
-            </div>
-
             <div className="data-modal__body">
               <aside className="field-inspector">
                 <div className="section-title">
@@ -4133,41 +5008,48 @@ body{font-family:Arial,sans-serif;color:#1a1f26;margin:28px;line-height:1.5}h1{f
                     {rows.length > 0 ? `${virtualPreviewStart + 1}-${virtualPreviewEnd} / ${rows.length}` : '0 行'}
                   </span>
                 </div>
-                <div
-                  className="data-preview is-virtualized"
-                  onScroll={(event) => setDataPreviewScrollTop(event.currentTarget.scrollTop)}
-                  style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(120px, 1fr))` }}
-                >
-                  {previewColumns.map((column) => (
-                    <strong className={dimensionColumns.has(column) ? 'is-dimension-column' : ''} key={column}>
-                      {column}
-                    </strong>
-                  ))}
-                  {virtualPreviewStart > 0 ? (
-                    <span
-                      className="data-preview__spacer"
-                      style={{ gridColumn: `1 / span ${Math.max(previewColumns.length, 1)}`, height: virtualPreviewStart * dataPreviewRowHeight }}
-                    />
-                  ) : null}
-                  {virtualPreviewRows.flatMap((row, rowIndex) =>
-                    previewColumns.map((column) => (
+                <div className="data-preview-shell">
+                  <div
+                    className="data-preview data-preview--header"
+                    style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(120px, 1fr))` }}
+                  >
+                    {previewColumns.map((column) => (
+                      <strong className={dimensionColumns.has(column) ? 'is-dimension-column' : ''} key={column}>
+                        {column}
+                      </strong>
+                    ))}
+                  </div>
+                  <div
+                    className="data-preview data-preview--body is-virtualized"
+                    onScroll={(event) => setDataPreviewScrollTop(event.currentTarget.scrollTop)}
+                    style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(120px, 1fr))` }}
+                  >
+                    {virtualPreviewStart > 0 ? (
                       <span
-                        className={row[column] === null || row[column] === '' ? 'is-missing' : ''}
-                        key={`${virtualPreviewStart + rowIndex}-${column}`}
-                      >
-                        {previewValue(row[column])}
-                      </span>
-                    )),
-                  )}
-                  {virtualPreviewEnd < rows.length ? (
-                    <span
-                      className="data-preview__spacer"
-                      style={{
-                        gridColumn: `1 / span ${Math.max(previewColumns.length, 1)}`,
-                        height: (rows.length - virtualPreviewEnd) * dataPreviewRowHeight,
-                      }}
-                    />
-                  ) : null}
+                        className="data-preview__spacer"
+                        style={{ gridColumn: `1 / span ${Math.max(previewColumns.length, 1)}`, height: virtualPreviewStart * dataPreviewRowHeight }}
+                      />
+                    ) : null}
+                    {virtualPreviewRows.flatMap((row, rowIndex) =>
+                      previewColumns.map((column) => (
+                        <span
+                          className={row[column] === null || row[column] === '' ? 'is-missing' : ''}
+                          key={`${virtualPreviewStart + rowIndex}-${column}`}
+                        >
+                          {previewValue(row[column])}
+                        </span>
+                      )),
+                    )}
+                    {virtualPreviewEnd < rows.length ? (
+                      <span
+                        className="data-preview__spacer"
+                        style={{
+                          gridColumn: `1 / span ${Math.max(previewColumns.length, 1)}`,
+                          height: (rows.length - virtualPreviewEnd) * dataPreviewRowHeight,
+                        }}
+                      />
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>

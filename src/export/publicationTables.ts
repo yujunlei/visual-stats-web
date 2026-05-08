@@ -57,41 +57,71 @@ export type CustomPublicationSource = {
   label: string
   group?: string
   modelLabel?: string
+  modelName?: string
+  formula?: string
+  createdAt?: string
 }
 
 export type CustomPublicationInput = {
   title: string
   sources: CustomPublicationSource[]
   note: string
+  variableOrder?: string[]
+  enabledStatisticIds?: string[]
+  variableLabels?: Record<string, string>
+  statisticLabels?: Record<string, string>
+  formatRules?: PublicationFormatRules
 }
 
-const significanceStars = (pValue: unknown) => {
+export type PublicationFormatRules = {
+  coefficientDigits: number
+  statisticDigits: number
+  nDigits: number
+  r2Digits: number
+  parenthesisMode: 't' | 'z' | 'stdError'
+  starLevels: {
+    one: number
+    two: number
+    three: number
+  }
+  missingDisplay: '' | '-' | '/'
+  booleanDisplay: 'yes-no' | 'yes-blank' | 'check'
+}
+
+const publicationParenthesisLabel = (mode: PublicationFormatRules['parenthesisMode']) => {
+  if (mode === 'stdError') return '标准误'
+  if (mode === 'z') return 'z 值'
+  return 't 值'
+}
+
+const buildPublicationNote = (rules: PublicationFormatRules) =>
+  `注：稳健标准误；括号内为 ${publicationParenthesisLabel(rules.parenthesisMode)}；* p<${rules.starLevels.one}，** p<${rules.starLevels.two}，*** p<${rules.starLevels.three}`
+
+const significanceStars = (pValue: unknown, thresholds: PublicationFormatRules['starLevels']) => {
   if (typeof pValue !== 'number') return ''
-  if (pValue < 0.01) return '***'
-  if (pValue < 0.05) return '**'
-  if (pValue < 0.1) return '*'
+  if (pValue < thresholds.three) return '***'
+  if (pValue < thresholds.two) return '**'
+  if (pValue < thresholds.one) return '*'
   return ''
 }
 
-const statisticInParentheses = (coefficient: unknown, stdError: unknown) => {
-  if (typeof coefficient !== 'number' || typeof stdError !== 'number' || stdError === 0) return ''
-  return `(${(coefficient / stdError).toFixed(2)})`
+const statisticInParentheses = (row: Record<string, unknown>, mode: 't' | 'z' | 'stdError', digits: number, missingDisplay: '' | '-' | '/') => {
+  if (mode === 'stdError') {
+    if (typeof row.stdError !== 'number') return missingDisplay
+    return `(${row.stdError.toFixed(digits)})`
+  }
+  if (typeof row.coefficient !== 'number' || typeof row.stdError !== 'number' || row.stdError === 0) return missingDisplay
+  return `(${(row.coefficient / row.stdError).toFixed(digits)})`
 }
 
-const formatPublicationCoefficient = (value: unknown) => {
-  if (typeof value !== 'number') return value === undefined || value === null ? '' : String(value)
-  const abs = Math.abs(value)
-  if (abs === 0) return '0.000'
-  if (abs >= 100) return formatNumber(value, 3)
-  if (abs >= 1) return formatNumber(value, 4)
-  if (abs >= 0.01) return value.toFixed(4)
-  if (abs >= 0.001) return value.toFixed(5)
-  return value.toPrecision(4)
+const formatPublicationCoefficient = (value: unknown, digits: number, missingDisplay: '' | '-' | '/') => {
+  if (typeof value !== 'number') return value === undefined || value === null || value === '' ? missingDisplay : String(value)
+  return value.toFixed(digits)
 }
 
-const formatPublicationMetric = (value: unknown, kind: 'n' | 'r2') => {
-  if (typeof value !== 'number') return value === undefined || value === null ? '' : String(value)
-  return kind === 'n' ? formatNumber(value, 0) : value.toFixed(3)
+const formatPublicationMetric = (value: unknown, kind: 'n' | 'r2', digits: number, missingDisplay: '' | '-' | '/') => {
+  if (typeof value !== 'number') return value === undefined || value === null || value === '' ? missingDisplay : String(value)
+  return kind === 'n' ? formatNumber(value, digits) : value.toFixed(digits)
 }
 
 const metricNumber = (result: ModelResult, label: string) => {
@@ -141,8 +171,8 @@ export const buildBaselinePublicationTable = ({
     const row = robustnessByModelTerm.get(`${model}::${term}`) ?? (model === modelNames[0] ? coefficientByTerm.get(term) : undefined)
     if (!row) return { coefficient: '', statistic: '' }
     return {
-      coefficient: `${formatPublicationCoefficient(row.coefficient)}${significanceStars(row.pValue)}`,
-      statistic: statisticInParentheses(row.coefficient, row.stdError),
+      coefficient: `${formatPublicationCoefficient(row.coefficient, 4, '')}${significanceStars(row.pValue, { one: 0.1, two: 0.05, three: 0.01 })}`,
+      statistic: statisticInParentheses(row, 't', 2, ''),
     }
   }
 
@@ -168,8 +198,8 @@ export const buildBaselinePublicationTable = ({
       ]
     }),
     ...fixedEffectRows,
-    { role: 'metric', label: 'N', values: modelNames.map((model) => formatPublicationMetric(nByModel(model), 'n')) },
-    { role: 'metric', label: 'Adj-R²', values: modelNames.map((model) => formatPublicationMetric(r2ByModel(model), 'r2')) },
+    { role: 'metric', label: 'N', values: modelNames.map((model) => formatPublicationMetric(nByModel(model), 'n', 0, '')) },
+    { role: 'metric', label: 'Adj-R²', values: modelNames.map((model) => formatPublicationMetric(r2ByModel(model), 'r2', 3, '')) },
   ]
 
   const noteRowIndex = rows.length
@@ -180,7 +210,7 @@ export const buildBaselinePublicationTable = ({
     sheetName: '基准回归结果',
     columns,
     rows,
-    notes: ['注：稳健标准误；括号内为 t 值；* p<0.1，** p<0.05，*** p<0.01'],
+    notes: [buildPublicationNote({ coefficientDigits: 4, statisticDigits: 2, nDigits: 0, r2Digits: 3, parenthesisMode: 't', starLevels: { one: 0.1, two: 0.05, three: 0.01 }, missingDisplay: '', booleanDisplay: 'yes-no' })],
     merges: [
       { rowIndex: 0, columnIndex: 0, columnSpan: columns.length + 1 },
       { rowIndex: 1, columnIndex: 1, columnSpan: columns.length },
@@ -189,8 +219,27 @@ export const buildBaselinePublicationTable = ({
   }
 }
 
-export const buildCustomPublicationTable = ({ title, sources, note }: CustomPublicationInput): PublicationTable | null => {
+export const buildCustomPublicationTable = ({
+  title,
+  sources,
+  note,
+  variableOrder = [],
+  enabledStatisticIds = [],
+  variableLabels = {},
+  statisticLabels = {},
+  formatRules,
+}: CustomPublicationInput): PublicationTable | null => {
   if (sources.length === 0) return null
+  const rules = formatRules ?? {
+    coefficientDigits: 4,
+    statisticDigits: 2,
+    nDigits: 0,
+    r2Digits: 3,
+    parenthesisMode: 't' as const,
+    starLevels: { one: 0.1, two: 0.05, three: 0.01 },
+    missingDisplay: '' as const,
+    booleanDisplay: 'yes-no' as const,
+  }
 
   const columnSources = sources
     .map((source, index) => {
@@ -211,22 +260,25 @@ export const buildCustomPublicationTable = ({ title, sources, note }: CustomPubl
   if (columnSources.length === 0) return null
 
   const coefficientMaps = columnSources.map((source) => new Map(source.coefficientTable.rows.map((row) => [String(row.term ?? row.variable ?? ''), row])))
-  const orderedTerms = Array.from(
+  const availableTerms = Array.from(
     new Set([
       ...columnSources.flatMap((source) => source.config.features),
-      ...coefficientMaps.flatMap((map) => Array.from(map.keys()).filter((term) => term && term !== '_cons')),
-      ...coefficientMaps.flatMap((map) => (map.has('_cons') ? ['_cons'] : [])),
+      ...coefficientMaps.flatMap((map) => Array.from(map.keys()).filter(Boolean)),
     ]),
   )
+  const orderedTerms = [
+    ...variableOrder.filter((term) => availableTerms.includes(term)),
+    ...availableTerms.filter((term) => !variableOrder.includes(term)),
+  ]
 
   const rowForTerm = (term: string) => {
-    const label = term === '_cons' ? 'Cons' : term
+    const label = variableLabels[term]?.trim() || (term === '_cons' ? 'Cons' : term)
     const cells = coefficientMaps.map((map) => {
       const row = map.get(term)
-      if (!row) return { coefficient: '', statistic: '' }
+      if (!row) return { coefficient: rules.missingDisplay, statistic: rules.missingDisplay }
       return {
-        coefficient: `${formatPublicationCoefficient(row.coefficient)}${significanceStars(row.pValue)}`,
-        statistic: statisticInParentheses(row.coefficient, row.stdError),
+        coefficient: `${formatPublicationCoefficient(row.coefficient, rules.coefficientDigits, rules.missingDisplay)}${significanceStars(row.pValue, rules.starLevels)}`,
+        statistic: statisticInParentheses(row, rules.parenthesisMode, rules.statisticDigits, rules.missingDisplay),
       }
     })
     return [
@@ -239,14 +291,83 @@ export const buildCustomPublicationTable = ({ title, sources, note }: CustomPubl
   const hasGroups = columnSources.some((source) => source.group)
   const groupValues = columnSources.map((source) => source.group || '')
   const modelValues = columnSources.map((source) => source.modelLabel || '')
+  const statisticRows: PublicationRow[] = []
+
+  const enabledStatisticIdSet = new Set(
+    enabledStatisticIds.length > 0
+      ? enabledStatisticIds
+      : [
+          'controls',
+          ...Array.from(
+            new Set(
+              columnSources.flatMap((source) => [
+                ...source.dimensions.groupFields.map((field) => `fe:${field} FE`),
+                ...source.dimensions.idFields.map((field) => `fe:${field} FE`),
+                ...(source.dimensions.timeField ? [`fe:${source.dimensions.timeField} FE`] : []),
+              ]),
+            ),
+          ),
+          'n',
+          'adj-r2',
+        ],
+  )
+
+  if (enabledStatisticIdSet.has('controls')) {
+    statisticRows.push({
+      role: 'fixedEffect',
+      label: statisticLabels.controls?.trim() || 'Controls',
+      values: columnSources.map((source) => (source.config.features.length > 0 ? (rules.booleanDisplay === 'check' ? '✓' : 'Yes') : rules.booleanDisplay === 'yes-no' ? 'No' : '')),
+    })
+  }
+
+  const fixedEffectLabels = Array.from(
+    new Set(
+      columnSources.flatMap((source) => [
+        ...source.dimensions.groupFields.map((field) => `${field} FE`),
+        ...source.dimensions.idFields.map((field) => `${field} FE`),
+        ...(source.dimensions.timeField ? [`${source.dimensions.timeField} FE`] : []),
+      ]),
+    ),
+  )
+  fixedEffectLabels.forEach((label) => {
+    if (!enabledStatisticIdSet.has(`fe:${label}`)) return
+    statisticRows.push({
+      role: 'fixedEffect',
+      label: statisticLabels[`fe:${label}`]?.trim() || label,
+      values: columnSources.map((source) => {
+        const labels = new Set([
+          ...source.dimensions.groupFields.map((field) => `${field} FE`),
+          ...source.dimensions.idFields.map((field) => `${field} FE`),
+          ...(source.dimensions.timeField ? [`${source.dimensions.timeField} FE`] : []),
+        ])
+        return labels.has(label) ? (rules.booleanDisplay === 'check' ? '✓' : 'Yes') : rules.booleanDisplay === 'yes-no' ? 'No' : ''
+      }),
+    })
+  })
+
+  if (enabledStatisticIdSet.has('n')) {
+    statisticRows.push({
+      role: 'metric',
+      label: statisticLabels.n?.trim() || 'N',
+      values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'Number of obs'), 'n', rules.nDigits, rules.missingDisplay)),
+    })
+  }
+
+  if (enabledStatisticIdSet.has('adj-r2')) {
+    statisticRows.push({
+      role: 'metric',
+      label: statisticLabels['adj-r2']?.trim() || 'Adj-R²',
+      values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'R-squared'), 'r2', rules.r2Digits, rules.missingDisplay)),
+    })
+  }
+
   const rows: PublicationRow[] = [
     { role: 'title', label: title || '自定义论文表', values: columnSources.map(() => '') },
     ...(hasGroups ? [{ role: 'model' as const, label: 'Model', values: groupValues }] : []),
     ...(modelValues.some(Boolean) ? [{ role: 'model' as const, label: hasGroups ? '' : 'Model', values: modelValues }] : []),
     { role: 'header', label: 'Variables', values: columnSources.map((source) => source.column.label) },
     ...orderedTerms.flatMap(rowForTerm),
-    { role: 'metric', label: 'N', values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'Number of obs'), 'n')) },
-    { role: 'metric', label: 'Adj-R²', values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'R-squared'), 'r2')) },
+    ...statisticRows,
   ]
 
   const noteRowIndex = rows.length
@@ -272,7 +393,7 @@ export const buildCustomPublicationTable = ({ title, sources, note }: CustomPubl
     sheetName: '自定义论文表',
     columns: columnSources.map((source) => source.column),
     rows,
-    notes: [note || '注：稳健标准误；括号内为 t 值；* p<0.1，** p<0.05，*** p<0.01'],
+    notes: [note || buildPublicationNote(rules)],
     merges,
   }
 }
