@@ -20,7 +20,7 @@
 .results-workspace {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 18px;
   min-width: 0;
   min-height: 0;
   padding: 12px;
@@ -38,7 +38,7 @@
   display: grid;
   min-width: 0;
   min-height: 0;
-  gap: 12px;
+  gap: 14px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -85,7 +85,7 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 10px;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
   margin: 0;
@@ -98,7 +98,22 @@
 
 .result-primary-summary > .notice {
   grid-column: 1 / -1;
-  margin: 0;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 4px 0 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.result-primary-summary > .notice > * {
+  min-width: 0;
+}
+
+.result-primary-summary + .result-tables,
+.result-primary-summary + .result-support-row {
+  margin-top: 2px;
 }
 
 .result-primary-summary > .summary-grid,
@@ -126,11 +141,11 @@
   position: relative;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.88);
