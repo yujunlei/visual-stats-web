@@ -34,15 +34,20 @@
   scrollbar-gutter: stable;
 }
 
+/* The whole result reading area should feel like one large parent section. */
 .result-primary-panel {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
-  gap: 14px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+  gap: 18px;
+  padding: 20px 22px 22px;
+  border: 1px solid rgba(22, 122, 118, 0.18);
+  border-radius: calc(var(--radius-md) + 4px);
+  background:
+    linear-gradient(180deg, rgba(22, 122, 118, 0.045), rgba(255, 255, 255, 0.82) 42%),
+    var(--surface);
+  box-shadow: 0 12px 36px rgba(26, 29, 34, 0.045);
   overflow: visible;
 }
 
@@ -53,8 +58,8 @@
   gap: 12px;
   min-width: 0;
   margin: 0;
-  padding: 4px 2px 10px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 0 14px;
+  border-bottom: 1px solid rgba(22, 122, 118, 0.16);
 }
 
 .result-primary-header .section-title {
@@ -63,9 +68,9 @@
 }
 
 .result-primary-header .section-title h2 {
-  font-size: 18px;
-  font-weight: 760;
-  letter-spacing: -0.025em;
+  font-size: 20px;
+  font-weight: 780;
+  letter-spacing: -0.03em;
 }
 
 .result-primary-header .section-title + p,
@@ -85,14 +90,14 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 14px;
-  border: 1px solid var(--accent-muted);
+  padding: 16px;
+  border: 1px solid rgba(22, 122, 118, 0.18);
   border-radius: var(--radius-md);
-  background: var(--accent-subtle);
+  background: rgba(22, 122, 118, 0.055);
   overflow: visible;
 }
 
@@ -103,8 +108,10 @@
   min-width: 0;
   margin: 4px 0 0;
   padding: 14px 16px;
+  border: 0;
+  border-left: 4px solid rgba(22, 122, 118, 0.24);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.56);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .result-primary-summary > .notice > * {
@@ -113,7 +120,7 @@
 
 .result-primary-summary + .result-tables,
 .result-primary-summary + .result-support-row {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .result-primary-summary > .summary-grid,
@@ -141,14 +148,14 @@
   position: relative;
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 14px;
-  border: 1px solid var(--line);
+  padding: 16px;
+  border: 1px solid rgba(26, 29, 34, 0.1);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.74);
   overflow: visible;
 }
 
@@ -204,7 +211,7 @@
 .result-support-row {
   min-width: 0;
   min-height: 0;
-  gap: 10px;
+  gap: 14px;
   margin-top: 0;
   padding: 0;
   overflow: visible;
@@ -231,6 +238,10 @@
 @media (max-width: 920px) {
   .results-workspace {
     padding: 10px;
+  }
+
+  .result-primary-panel {
+    padding: 16px;
   }
 
   .result-primary-header {
