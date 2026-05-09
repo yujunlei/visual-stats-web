@@ -10,6 +10,11 @@
 
    This file is intentionally CSS-only. It does not change model logic,
    table values, export behavior, or Electron behavior.
+
+   Important:
+   - Do not create section titles with ::before / ::after.
+   - The page already renders real headings such as "模型摘要" and "系数估计".
+   - CSS-generated headings will overlap those real headings.
    ================================================================ */
 
 .results-workspace {
@@ -91,20 +96,6 @@
   overflow: visible;
 }
 
-.result-primary-summary::before {
-  content: 'Natural-language findings';
-  position: absolute;
-  top: -9px;
-  left: 14px;
-  padding: 0 6px;
-  color: var(--muted);
-  background: var(--surface);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .result-primary-summary > .notice {
   grid-column: 1 / -1;
   margin: 0;
@@ -139,33 +130,11 @@
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 38px 12px 12px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.88);
   overflow: visible;
-}
-
-.result-tables::before {
-  content: '统计表格';
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 760;
-  letter-spacing: 0.02em;
-}
-
-.result-tables::after {
-  content: 'Statistical tables';
-  position: absolute;
-  top: 13px;
-  left: 86px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
 }
 
 .result-secondary-tables {
@@ -242,15 +211,6 @@
   .result-secondary-tables {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .result-tables {
-    padding-top: 56px;
-  }
-
-  .result-tables::after {
-    top: 32px;
-    left: 14px;
-  }
 }
 
 @media (max-width: 920px) {
@@ -265,9 +225,5 @@
   .result-primary-summary,
   .result-tables {
     padding-inline: 10px;
-  }
-
-  .result-primary-summary {
-    padding-top: 18px;
   }
 }
