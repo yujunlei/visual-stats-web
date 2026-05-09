@@ -3,7 +3,6 @@
    ================================================================ */
 
 .app-shell {
-  min-width: 0;
   height: 100vh;
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr);
@@ -61,8 +60,6 @@
 
 .topbar__actions {
   gap: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
 }
 
 button, select, label { font: inherit; }
@@ -166,7 +163,6 @@ button, select, label { font: inherit; }
    ================================================================ */
 
 .workspace {
-  min-width: 0;
   min-height: 0;
   height: calc(100vh - 48px);
   display: grid;
@@ -175,10 +171,6 @@ button, select, label { font: inherit; }
   gap: 8px;
   padding: 8px;
   overflow: hidden;
-}
-
-.workspace > * {
-  min-width: 0;
 }
 
 .workspace.is-history-collapsed {
@@ -193,8 +185,6 @@ button, select, label { font: inherit; }
 .preview-panel,
 .result-panel,
 .chart-panel {
-  min-width: 0;
-  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -202,9 +192,8 @@ button, select, label { font: inherit; }
 }
 
 .panel {
-  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 12px;
 }
 
@@ -227,7 +216,6 @@ button, select, label { font: inherit; }
 }
 
 .data-panel {
-  min-width: 0;
   height: calc(100vh - 64px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -417,20 +405,13 @@ button, select, label { font: inherit; }
 
 .main-stage {
   position: relative;
-  min-width: 0;
   display: grid;
-  min-height: 0;
+  min-width: 0;
   height: calc(100vh - 64px);
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 6px;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }
-.main-stage > * {
-  min-width: 0;
-  overflow: visible;
-}
-
 
 .empty-workbench {
   min-height: 0;
@@ -465,7 +446,6 @@ button, select, label { font: inherit; }
 .import-cta { position: relative; }
 
 .config-panel {
-  min-width: 0;
   height: calc(100vh - 64px);
   align-self: start;
   overflow: auto;
@@ -538,13 +518,7 @@ button, select, label { font: inherit; }
 .run-status-card strong { color: var(--ink); font-size: 12.5px; font-weight: 650; }
 .run-status-card p { margin: 1px 0 0; color: var(--muted); font-size: 11px; line-height: 1.35; }
 
-.run-status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 5px;
-  min-width: 0;
-}
+.run-status-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .run-status-actions .primary-button,
 .run-status-actions .secondary-button { height: 28px; padding: 0 10px; font-size: 12px; }
 
@@ -598,8 +572,7 @@ button, select, label { font: inherit; }
    ================================================================ */
 
 .results-workspace {
-  min-width: 0;
-  min-height: 0;
+  min-width: 0; min-height: 0;
   display: block;
   overflow: auto; overflow-x: auto;
   padding-right: 2px;
@@ -613,17 +586,10 @@ button, select, label { font: inherit; }
 }
 .result-primary-header .section-title { min-width: 0; margin-bottom: 0; }
 
-.export-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
-  min-width: 0;
-}
+.export-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 .export-actions .ghost-button { height: 24px; min-width: 40px; padding: 0 6px; font-size: 10px; font-weight: 700; margin-left: 0; border-color: var(--line); background: var(--soft); color: var(--ink); }
 
 .result-primary-summary {
-  min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(340px, 0.95fr) minmax(0, 1.05fr);
@@ -631,13 +597,12 @@ button, select, label { font: inherit; }
   align-items: stretch;
   margin-bottom: 6px;
 }
-.result-primary-summary > .notice { grid-column: 1 / -1; margin: 0; overflow: visible; }
+.result-primary-summary > .notice { grid-column: 1 / -1; margin: 0; }
 .result-primary-summary > .summary-grid,
 .result-primary-summary > .result-insights { margin: 0; }
 
 .result-support-row {
-  min-width: 0;
-  min-height: 0;
+  min-width: 0; min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(280px, 0.92fr);
   gap: 6px;
@@ -645,13 +610,7 @@ button, select, label { font: inherit; }
   overflow: visible;
 }
 
-.result-panel,
-.chart-panel {
-  min-width: 0;
-  min-height: 0;
-  padding: 8px;
-  overflow: visible;
-}
+.result-panel, .chart-panel { min-width: 0; padding: 8px; }
 .result-diagnostic-card, .result-log-card { min-height: 0; display: grid; grid-template-rows: auto auto; overflow: visible; padding: 8px; }
 .result-diagnostic-card .section-title, .result-log-card .section-title { margin-bottom: 4px; }
 .chart-panel { grid-column: 1 / -1; }
@@ -697,23 +656,9 @@ button, select, label { font: inherit; }
    COEFFICIENT TABLES
    ================================================================ */
 
-.coef-table {
-  min-width: 0;
-  display: grid;
-  overflow: visible;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-}
-.result-tables { display: grid; align-content: start; gap: 6px; min-height: 0; overflow: visible; padding-right: 2px; scrollbar-gutter: stable; }
-.result-secondary-tables {
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  align-content: start;
-  overflow: visible;
-}
+.coef-table { display: grid; overflow: visible; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.result-tables { display: grid; align-content: start; gap: 6px; min-height: 0; overflow: visible; padding-right: 2px; }
+.result-secondary-tables { min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; align-content: start; }
 .result-tables > .empty-diagnostic { height: auto; min-height: 160px; }
 
 .table-caption {
@@ -726,14 +671,7 @@ button, select, label { font: inherit; }
 }
 .table-caption span { color: var(--muted); font-size: 10px; font-weight: 600; }
 
-.coef-table__head,
-.coef-table__row {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-  align-items: center;
-  padding: 4px 8px;
-}
+.coef-table__head, .coef-table__row { display: grid; gap: 5px; align-items: center; padding: 4px 8px; }
 .coef-table__head { color: var(--muted); background: var(--soft); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .coef-table__row { border-top: 1px solid var(--line-subtle); font-size: 11.5px; transition: background-color 60ms ease; }
 .coef-table__row:hover { background: var(--accent-subtle); }
@@ -976,10 +914,7 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
    DATA PREVIEW TABLE
    ================================================================ */
 
-.preview-panel {
-  min-width: 0;
-  padding: 10px;
-}
+.preview-panel { min-width: 0; padding: 10px; }
 .section-title { gap: 6px; margin-bottom: 8px; }
 .section-meta { margin-left: auto; color: var(--muted); font-size: 10.5px; font-weight: 600; }
 
@@ -1265,14 +1200,6 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
 /* ================================================================
    RESPONSIVE
    ================================================================ */
-
-@media (max-width: 1280px) {
-  .result-primary-summary,
-  .result-support-row,
-  .result-secondary-tables {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: 240px minmax(0,1fr) 280px; }
@@ -1979,6 +1906,46 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
 .result-secondary-tables {
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.result-support-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.result-support-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.result-support-section__header h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.result-support-section__header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.result-support-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 1280px) {
+  .result-support-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .result-disclosure {

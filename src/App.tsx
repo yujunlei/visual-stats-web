@@ -38,6 +38,7 @@ import {
   modelUsageStorageKey,
   snapshotStorageKey,
 } from './constants/workbench'
+import './App.css'
 
 const stableMaturity: NonNullable<ModelPlugin['maturity']> = {
   level: 'stable',
@@ -924,7 +925,6 @@ function App() {
   const [selectedExportItemIds, setSelectedExportItemIds] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState('')
-  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
   const [customPublicationConfig, setCustomPublicationConfig] = useState<CustomPublicationConfig>(loadCustomPublicationDraft)
   const [customPublicationTemplates, setCustomPublicationTemplates] = useState<CustomPublicationTemplate[]>(loadCustomPublicationTemplates)
   const [customPublicationDefaultTemplateId, setCustomPublicationDefaultTemplateId] = useState(loadCustomPublicationDefaultTemplateId)
@@ -3818,99 +3818,87 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                     </div>
 
                     {result ? (
-                      <section className="result-disclosure">
-                      <button
-                        className={`result-disclosure__toggle ${isDiagnosticsOpen ? 'is-open' : ''}`}
-                        type="button"
-                        onClick={() => setIsDiagnosticsOpen((current) => !current)}
-                      >
-                        <span>诊断与运行日志</span>
-                        <small>{isDiagnosticsOpen ? '收起补充诊断' : '展开补充诊断'}</small>
-                      </button>
-                      {isDiagnosticsOpen ? (
-                        <div className="result-disclosure__body">
-                          <div className="paper-section-heading paper-section-heading--compact paper-section-heading--muted">
-                            <span className="paper-section-heading__index">四</span>
-                            <div>
-                              <strong>补充诊断</strong>
-                              <small>Diagnostics and logs</small>
-                            </div>
+                      <section className="result-support-section">
+                        <div className="result-support-section__header">
+                          <div>
+                            <span className="panel__label">SUPPORT</span>
+                            <h3>诊断与运行日志</h3>
+                            <p>用于补充判断模型质量、运行过程和异常提示。</p>
                           </div>
-                          <div className="result-support-row">
-                            <div className="result-panel result-diagnostic-card">
-                              <div className="section-title">
-                                <Activity size={18} />
-                                <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
-                              </div>
-                              {primaryDiagnostic ? (
-                                <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
-                                  {primaryDiagnostic.actual.map((actual, index) => {
-                                    const maxActual = Math.max(...primaryDiagnostic.actual)
-                                    const maxFitted = Math.max(...primaryDiagnostic.fitted)
-                                    return (
-                                      <span
-                                        key={`${actual}-${index}`}
-                                        style={{
-                                          left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
-                                          bottom: `${(actual / maxActual) * 80 + 8}%`,
-                                        }}
-                                      />
-                                    )
-                                  })}
-                                </div>
-                              ) : correlationMatrix ? (
-                                <div
-                                  className="correlation-heatmap is-compact"
-                                  style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
-                                >
-                                  <span />
-                                  {correlationMatrix.variables.map((variable) => (
-                                    <strong key={variable}>{variable}</strong>
-                                  ))}
-                                  {correlationMatrix.matrix.flatMap((row, rowIndex) => [
-                                    <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
-                                      {correlationMatrix.variables[rowIndex]}
-                                    </strong>,
-                                    ...row.map((value, columnIndex) => (
-                                      <span
-                                        key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
-                                        style={{
-                                          backgroundColor:
-                                            value >= 0
-                                              ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
-                                              : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
-                                          color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
-                                        }}
-                                      >
-                                        {formatNumber(value, 2)}
-                                      </span>
-                                    )),
-                                  ])}
-                                </div>
-                              ) : (
-                                <div className="empty-diagnostic is-compact">
-                                  <Activity size={18} />
-                                  暂无诊断图。
-                                </div>
-                              )}
+                        </div>
+                        <div className="result-support-row">
+                          <div className="result-panel result-diagnostic-card">
+                            <div className="section-title">
+                              <Activity size={18} />
+                              <h2>{primaryDiagnostic?.title ?? correlationMatrix?.title ?? '拟合诊断'}</h2>
                             </div>
-
-                            <div className="result-panel result-log-card">
-                              <div className="section-title">
-                                <Activity size={18} />
-                                <h2>运行日志</h2>
+                            {primaryDiagnostic ? (
+                              <div className="scatter-plot is-compact" aria-label="Actual versus fitted chart">
+                                {primaryDiagnostic.actual.map((actual, index) => {
+                                  const maxActual = Math.max(...primaryDiagnostic.actual)
+                                  const maxFitted = Math.max(...primaryDiagnostic.fitted)
+                                  return (
+                                    <span
+                                      key={`${actual}-${index}`}
+                                      style={{
+                                        left: `${(primaryDiagnostic.fitted[index] / maxFitted) * 88 + 5}%`,
+                                        bottom: `${(actual / maxActual) * 80 + 8}%`,
+                                      }}
+                                    />
+                                  )
+                                })}
                               </div>
-                              <div className="run-log is-expanded">
-                                {runLogs.map((entry, index) => (
-                                  <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
-                                    {entry.message}
-                                  </p>
+                            ) : correlationMatrix ? (
+                              <div
+                                className="correlation-heatmap is-compact"
+                                style={{ gridTemplateColumns: `72px repeat(${correlationMatrix.variables.length}, minmax(42px, 1fr))` }}
+                              >
+                                <span />
+                                {correlationMatrix.variables.map((variable) => (
+                                  <strong key={variable}>{variable}</strong>
                                 ))}
+                                {correlationMatrix.matrix.flatMap((row, rowIndex) => [
+                                  <strong className="correlation-heatmap__row-label" key={`${correlationMatrix.variables[rowIndex]}-label`}>
+                                    {correlationMatrix.variables[rowIndex]}
+                                  </strong>,
+                                  ...row.map((value, columnIndex) => (
+                                    <span
+                                      key={`${correlationMatrix.variables[rowIndex]}-${correlationMatrix.variables[columnIndex]}`}
+                                      style={{
+                                        backgroundColor:
+                                          value >= 0
+                                            ? `rgba(23, 124, 120, ${Math.min(Math.abs(value), 1) * 0.78 + 0.08})`
+                                            : `rgba(187, 69, 54, ${Math.min(Math.abs(value), 1) * 0.72 + 0.08})`,
+                                        color: Math.abs(value) > 0.62 ? '#ffffff' : 'var(--ink)',
+                                      }}
+                                    >
+                                      {formatNumber(value, 2)}
+                                    </span>
+                                  )),
+                                ])}
                               </div>
+                            ) : (
+                              <div className="empty-diagnostic is-compact">
+                                <Activity size={18} />
+                                暂无诊断图。
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="result-panel result-log-card">
+                            <div className="section-title">
+                              <Activity size={18} />
+                              <h2>运行日志</h2>
+                            </div>
+                            <div className="run-log is-expanded">
+                              {runLogs.map((entry, index) => (
+                                <p className={entry.level === 'warning' ? 'is-warning' : ''} key={`${entry.message}-${index}`}>
+                                  {entry.message}
+                                </p>
+                              ))}
                             </div>
                           </div>
                         </div>
-                      ) : null}
                       </section>
                     ) : null}
                   </section>
