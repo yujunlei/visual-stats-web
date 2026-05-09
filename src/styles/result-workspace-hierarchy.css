@@ -1,0 +1,273 @@
+/* ================================================================
+   RESULT WORKSPACE HIERARCHY
+   ================================================================
+
+   Purpose:
+   - Make the result page read as one unified result workspace.
+   - Keep "结果解读 / 核心结论 / 统计表格 / 系数估计" visually grouped.
+   - Avoid making coefficient tables look like detached cards outside
+     of the result reading area.
+
+   This file is intentionally CSS-only. It does not change model logic,
+   table values, export behavior, or Electron behavior.
+   ================================================================ */
+
+.results-workspace {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 247, 0.9)),
+    var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.result-primary-panel {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.result-primary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 2px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.result-primary-header .section-title {
+  min-width: 0;
+  margin: 0;
+}
+
+.result-primary-header .section-title h2 {
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: -0.025em;
+}
+
+.result-primary-header .section-title + p,
+.result-primary-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.export-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* Natural-language conclusion stays as the first child section. */
+.result-primary-summary {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  overflow: visible;
+}
+
+.result-primary-summary::before {
+  content: 'Natural-language findings';
+  position: absolute;
+  top: -9px;
+  left: 14px;
+  padding: 0 6px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.result-primary-summary > .notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.result-primary-summary > .summary-grid,
+.result-primary-summary > .result-insights {
+  margin: 0;
+  min-width: 0;
+}
+
+.result-insights {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.result-insights strong {
+  font-size: 13px;
+}
+
+.result-insights p {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Statistical tables are explicitly grouped as the next result subsection. */
+.result-tables {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 38px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.88);
+  overflow: visible;
+}
+
+.result-tables::before {
+  content: '统计表格';
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+}
+
+.result-tables::after {
+  content: 'Statistical tables';
+  position: absolute;
+  top: 13px;
+  left: 86px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.result-secondary-tables {
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
+  overflow: visible;
+}
+
+.coef-table {
+  min-width: 0;
+  overflow: hidden;
+  border-color: rgba(26, 29, 34, 0.11);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.coef-table .table-caption {
+  min-width: 0;
+  padding: 10px 12px;
+  border-bottom-color: var(--line);
+  background: var(--soft);
+}
+
+.coef-table .table-caption strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coef-table .table-caption span {
+  flex-shrink: 0;
+}
+
+.coef-table__head,
+.coef-table__row {
+  min-width: 0;
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+.coef-table__head span,
+.coef-table__row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.result-support-row {
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
+  margin-top: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.result-diagnostic-card,
+.result-log-card,
+.result-panel,
+.chart-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+/* Keep the page readable when the center workspace is narrow. */
+@media (max-width: 1280px) {
+  .result-primary-summary,
+  .result-support-row,
+  .result-secondary-tables {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .result-tables {
+    padding-top: 56px;
+  }
+
+  .result-tables::after {
+    top: 32px;
+    left: 14px;
+  }
+}
+
+@media (max-width: 920px) {
+  .results-workspace {
+    padding: 10px;
+  }
+
+  .result-primary-header {
+    display: grid;
+  }
+
+  .result-primary-summary,
+  .result-tables {
+    padding-inline: 10px;
+  }
+
+  .result-primary-summary {
+    padding-top: 18px;
+  }
+}
