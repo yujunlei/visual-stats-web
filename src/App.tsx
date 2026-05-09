@@ -38,7 +38,6 @@ import {
   modelUsageStorageKey,
   snapshotStorageKey,
 } from './constants/workbench'
-import './App.css'
 
 const stableMaturity: NonNullable<ModelPlugin['maturity']> = {
   level: 'stable',
