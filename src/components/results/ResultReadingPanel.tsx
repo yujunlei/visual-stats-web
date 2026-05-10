@@ -5,8 +5,8 @@
  */
 import type { ModelResult, ModelMetric, ModelResultTable, ActualVsFittedDiagnostic, CorrelationMatrixDiagnostic } from '../../models/types'
 import type { RunLogEntry } from '../../data/preprocess'
-import { formatMetricValue } from './resultFormat'
 import { ResultTables } from './ResultTables'
+import { ResultMetricGrid } from './ResultMetricGrid'
 import { ResultSupportSection } from './ResultSupportSection'
 import { Activity, AlertTriangle, CheckCircle, Play } from 'lucide-react'
 
@@ -97,21 +97,7 @@ export function ResultReadingPanel(props: ResultReadingPanelProps) {
               <p>"建议先阅读自然语言结论，再结合摘要指标和系数估计判断显著性、方向与经济含义。"</p>
             </blockquote>
 
-            <div className="paper-section-heading">
-              <span className="paper-section-heading__index">二</span>
-              <div>
-                <strong>模型摘要</strong>
-                <small>Model summary</small>
-              </div>
-            </div>
-            <div className="summary-grid is-compact">
-              {visibleSummaryMetrics.map((metric) => (
-                <span key={metric.label}>
-                  <strong>{formatMetricValue(metric)}</strong>
-                  {metric.label}
-                </span>
-              ))}
-            </div>
+            <ResultMetricGrid summary={visibleSummaryMetrics} />
             <div className="result-insights result-insights--quiet">
               <strong>阅读提示</strong>
               <p>先确认模型摘要与显著性水平，再查看系数方向、区间和稳健性结果。</p>
