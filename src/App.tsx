@@ -3659,14 +3659,6 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                   </div>
 
                   <section className="result-reading-section">
-                    <header className="result-reading-section__header">
-                      <div>
-                        <span className="panel__label">RESULT READING</span>
-                        <h2>结果阅读</h2>
-                        <p>先阅读核心结论，再查看模型摘要、系数估计与补充诊断。</p>
-                      </div>
-                    </header>
-
                     {isModelRunning ? (
                       <div className="notice is-running-task">
                         <Activity size={16} />
