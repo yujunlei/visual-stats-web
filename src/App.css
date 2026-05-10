@@ -574,7 +574,7 @@ button, select, label { font: inherit; }
 .result-reading-section {
   min-width: 0;
   min-height: 0;
-  padding: 20px 22px;
+  padding: 16px 18px 20px;
   border: 1px solid rgba(26, 29, 34, 0.1);
   border-radius: calc(var(--radius-md) + 6px);
   background: var(--surface);
@@ -582,13 +582,17 @@ button, select, label { font: inherit; }
 }
 
 .result-reading-section__header {
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
 .result-reading-section__header h2 {
-  margin: 2px 0 4px;
+  margin: 2px 0 3px;
   color: var(--ink);
   font-size: 15px;
   font-weight: 700;
@@ -599,7 +603,7 @@ button, select, label { font: inherit; }
   margin: 0;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .result-reading-section > .notice,
@@ -607,23 +611,37 @@ button, select, label { font: inherit; }
 .result-reading-section > .result-tables,
 .result-reading-section > .result-support-section {
   min-width: 0;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .result-reading-section > .result-primary-summary {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--accent-muted);
-  border-radius: var(--radius-md);
-  background: var(--accent-subtle);
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Keep the core conclusion card prominent, but avoid wrapping it in a second heavy card. */
+.result-reading-section .lead-conclusion-card {
+  margin: 0;
+}
+
+.result-reading-section .paper-section-heading {
+  margin-top: 2px;
+}
+
+.result-reading-section .paper-quote-note {
+  margin: 0;
+  padding: 12px 14px;
 }
 
 .result-reading-section > .result-tables {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   overflow: visible;
   padding: 14px 16px;

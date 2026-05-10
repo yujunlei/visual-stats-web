@@ -133,3 +133,80 @@
     padding: 14px;
   }
 }
+
+/* ================================================================
+   RESULT READING COMPACT OVERRIDES
+   ================================================================
+
+   Keep the unified white result-reading container, but avoid creating
+   a nested heavy colored container around the core conclusion.
+
+   This file is imported after App.css, so these rules intentionally
+   live here rather than in App.css.
+   ================================================================ */
+
+.result-reading-section {
+  padding: 14px 18px 18px;
+  border: 1px solid rgba(26, 29, 34, 0.1);
+  border-radius: calc(var(--radius-md) + 4px);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.result-reading-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.result-reading-section__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 720;
+  letter-spacing: -0.012em;
+}
+
+.result-reading-section__header p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.result-reading-section > .result-primary-summary {
+  display: block;
+  margin-top: 12px;
+  margin-bottom: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.result-reading-section .lead-conclusion-card {
+  margin: 0;
+}
+
+.result-reading-section .paper-section-heading {
+  margin-top: 2px;
+}
+
+.result-reading-section .paper-quote-note {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-left: 4px solid rgba(22, 122, 118, 0.22);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: rgba(22, 122, 118, 0.035);
+}
+
+.result-reading-section .paper-quote-note p {
+  margin: 0;
+}
+
+.result-reading-section .paper-quote-note cite {
