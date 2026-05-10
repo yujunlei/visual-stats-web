@@ -568,6 +568,107 @@ button, select, label { font: inherit; }
 .diagnosis-metrics strong { color: var(--ink); font-size: 12px; font-weight: 700; }
 
 /* ================================================================
+   RESULT READING SECTION — unified parent container
+   ================================================================ */
+
+.result-reading-section {
+  min-width: 0;
+  min-height: 0;
+  padding: 20px 22px;
+  border: 1px solid rgba(26, 29, 34, 0.1);
+  border-radius: calc(var(--radius-md) + 6px);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.result-reading-section__header {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.result-reading-section__header h2 {
+  margin: 2px 0 4px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.result-reading-section__header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.result-reading-section > .notice,
+.result-reading-section > .result-primary-summary,
+.result-reading-section > .result-tables,
+.result-reading-section > .result-support-section {
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.result-reading-section > .result-primary-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+}
+
+.result-reading-section > .result-tables {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow: visible;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(248, 249, 246, 0.72);
+}
+
+.result-reading-section > .result-support-section {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-height: 0;
+  overflow: visible;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(248, 249, 246, 0.72);
+}
+
+.result-support-section__header {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.result-support-section__header h3 {
+  margin: 2px 0 4px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.result-support-section__header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.result-reading-section > .result-support-section > .result-support-row {
+  margin-top: 0;
+}
+
+/* ================================================================
    RESULTS AREA
    ================================================================ */
 
