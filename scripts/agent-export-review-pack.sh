@@ -34,12 +34,14 @@ git diff > "$OUT_DIR/git-diff.diff"
 cat > "$OUT_DIR/review-instructions.md" <<EOF
 # Review Instructions
 
-请让 Architect Reviewer Agent / Codex GPT 5.5 审查本次改动。
+请让 Codex Architect Agent 审查本次改动。
 
 ## 必须阅读
 
 - AGENTS.md
-- .agents/architect-reviewer.md
+- .agents/codex-architect.md
+- .codex/governance/meta-kim-contract.md
+- .codex/governance/karpathy-guidelines.md
 - 本目录中的 task.md
 - 本目录中的 git-status.txt
 - 本目录中的 git-diff-stat.txt
@@ -56,6 +58,8 @@ cat > "$OUT_DIR/review-instructions.md" <<EOF
 - 是否修改 Electron 安全边界
 - 是否新增不必要依赖
 - 是否有大范围无关重构
+- 是否通过 Meta_Kim Planning / Execution / Review / Verification / Evolution gates
+- 是否符合 Karpathy discipline：假设、简单性、外科手术式改动、验证证据
 - 是否建议合并
 
 ## 输出格式

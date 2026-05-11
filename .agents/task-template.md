@@ -6,11 +6,44 @@
 
 ## Assigned Agent
 
-Frontend Implementer / Refactor Implementer
+Codex Frontend / Codex Refactor
+
+Legacy aliases `Frontend Implementer` and `Refactor Implementer` may appear only in old task briefs. New tasks should use Codex role names.
 
 ## Goal
 
 本次任务要实现什么。
+
+## Meta_Kim Governance Packet
+
+```text
+intentPacket:
+  Goal:
+  Success Criteria:
+  Out of Scope:
+  Risk Level:
+
+fetchPacket:
+  Files inspected:
+  Existing workflow assets:
+  Matching capability:
+  Capability gaps:
+
+dispatchBoard:
+  Assigned Agent:
+  Worktree:
+  Review Owner:
+  Verification Commands:
+```
+
+## Karpathy Discipline
+
+```text
+Assumptions:
+Simplicity Check:
+Surgical Change Boundary:
+Verification Goal:
+```
 
 ## Allowed Files
 
@@ -37,6 +70,9 @@ Frontend Implementer / Refactor Implementer
 - [ ] 不破坏三列式专业工作台布局
 - [ ] 不修改禁止文件
 - [ ] 不新增不必要依赖
+- [ ] 不直接 commit
+- [ ] 不直接 push
+- [ ] 符合 Karpathy discipline：无隐藏假设、无过度抽象、无无关改动、有验证证据
 - [ ] `npm run typecheck` 通过
 - [ ] `npm run lint` 通过
 - [ ] `npm run build` 通过
@@ -63,4 +99,7 @@ npm run build
 测试结果：
 风险说明：
 git diff 摘要：
+verificationResult：
+evolutionWriteback：
+karpathyCheck：
 ```

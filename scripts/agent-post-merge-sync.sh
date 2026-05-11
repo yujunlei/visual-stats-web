@@ -39,7 +39,8 @@ sync_config_files() {
 
   echo "== 同步配置到 $target =="
 
-  mkdir -p "$target/.agents" "$target/.agent-tasks" "$target/scripts"
+  mkdir -p "$target/.agents" "$target/.agent-tasks" "$target/.codex/prompts" "$target/.codex/governance" "$target/docs" "$target/scripts"
+  rm -f "$target/.agents"/architect-*.md "$target/.agents"/*-implementer.md "$target/scripts"/hermes-*.sh 2>/dev/null || true
 
   cp AGENTS.md "$target/AGENTS.md"
 
@@ -54,6 +55,19 @@ sync_config_files() {
   if [ -d "scripts" ]; then
     cp scripts/*.sh "$target/scripts/" 2>/dev/null || true
     chmod +x "$target"/scripts/*.sh 2>/dev/null || true
+  fi
+
+  if [ -d ".codex/prompts" ]; then
+    rm -f "$target/.codex/prompts/.DS_Store" 2>/dev/null || true
+    cp .codex/prompts/*.md "$target/.codex/prompts/" 2>/dev/null || true
+  fi
+
+  if [ -d ".codex/governance" ]; then
+    cp .codex/governance/*.md "$target/.codex/governance/" 2>/dev/null || true
+  fi
+
+  if [ -d "docs" ]; then
+    cp docs/*.md "$target/docs/" 2>/dev/null || true
   fi
 
   echo "配置同步完成：$target"

@@ -21,21 +21,12 @@
     "appId": "com.visualstats.lab",
     "productName": "Visual Stats Lab",
     "asar": true,
-    "afterPack": "build/after-pack.cjs",
     "directories": {
       "output": "release"
     },
-
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend"
-      }
-    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "backend/**/*",
       "package.json"
     ],
     "mac": {
@@ -73,7 +64,8 @@
         "AppImage",
         "deb"
       ]
-    }
+    },
+    "afterPack": "./build/after-pack.cjs"
   },
   "dependencies": {
     "jstat": "^1.9.6",

@@ -1,27 +1,25 @@
 /**
  * ResultReadingPanel - extracted from App.tsx
- * Displays the main result-reading area: conclusions, summary, coefficient tables, diagnostics, and logs.
+ * Displays the main result-reading area: estimate overview, conclusion, and additional tables.
  * No business logic; purely presentational.
  */
-import type { ModelResult, ModelMetric, ModelResultTable, ActualVsFittedDiagnostic, CorrelationMatrixDiagnostic } from '../../models/types'
-import type { RunLogEntry } from '../../data/preprocess'
+import type { ModelResult, ModelMetric, ModelResultTable } from '../../models/types'
+import { ResultEstimateOverview } from './ResultEstimateOverview'
 import { ResultTables } from './ResultTables'
 import { ResultLeadConclusion } from './ResultLeadConclusion'
-import { ResultSupportSection } from './ResultSupportSection'
 import { Activity, AlertTriangle, Play } from 'lucide-react'
 
 type ResultReadingPanelProps = {
   result: ModelResult | null
-  runLogs: RunLogEntry[]
   isModelRunning: boolean
   hasStaleResult: boolean
+  modelName: string
+  formula: string
   leadInsight: string
   secondaryInsights: string[]
   visibleSummaryMetrics: ModelMetric[]
   mainResultTable: ModelResultTable | null
   secondaryResultTables: ModelResultTable[]
-  primaryDiagnostic: ActualVsFittedDiagnostic | undefined
-  correlationMatrix: CorrelationMatrixDiagnostic | undefined
   runTask: { phase: string; progress: number; elapsedMs: number } | null | undefined
   error: string | null
 }
@@ -37,16 +35,15 @@ const formatDuration = (ms: number) => {
 export function ResultReadingPanel(props: ResultReadingPanelProps) {
   const {
     result,
-    runLogs,
     isModelRunning,
     hasStaleResult,
+    modelName,
+    formula,
     leadInsight,
     secondaryInsights,
     visibleSummaryMetrics,
     mainResultTable,
     secondaryResultTables,
-    primaryDiagnostic,
-    correlationMatrix,
     runTask,
     error,
   } = props
@@ -70,23 +67,19 @@ export function ResultReadingPanel(props: ResultReadingPanelProps) {
         </div>
       ) : result ? (
         <>
+          <ResultEstimateOverview
+            modelName={modelName}
+            formula={formula}
+            visibleSummaryMetrics={visibleSummaryMetrics}
+            mainResultTable={mainResultTable}
+          />
+
           <ResultLeadConclusion
             leadInsight={leadInsight}
             secondaryInsights={secondaryInsights}
-            visibleSummaryMetrics={visibleSummaryMetrics}
           />
 
-          <ResultTables
-            result={result}
-            mainResultTable={mainResultTable}
-            secondaryResultTables={secondaryResultTables}
-          />
-
-          <ResultSupportSection
-            primaryDiagnostic={primaryDiagnostic}
-            correlationMatrix={correlationMatrix}
-            runLogs={runLogs}
-          />
+          <ResultTables secondaryResultTables={secondaryResultTables} />
         </>
       ) : (
         <div className="notice">

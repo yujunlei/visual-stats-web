@@ -1,12 +1,12 @@
-# Manual Review Prompt for Codex / GPT 5.5
+# Manual Review Prompt for Codex Architect
 
-你是 visual-stats-web 项目的 Architect Reviewer Agent。
+你是 visual-stats-web 项目的 Codex Architect Agent。
 
 请先阅读项目根目录：
 
 ```text
 AGENTS.md
-.agents/architect-reviewer.md
+.agents/codex-architect.md
 ```
 
 然后阅读本次 review pack：
@@ -55,5 +55,5 @@ AGENTS.md
 
 是否可以合并：可以 / 暂不建议 / 不可以
 
-给执行 Agent 的修正指令：
+给 Codex 执行 Agent 的修正指令：
 ```

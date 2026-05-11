@@ -23,19 +23,19 @@ import {
   X,
 } from 'lucide-react'
 import { type DataPrepConfig, type RunLogEntry } from './data/preprocess'
-import { formatNumber, profileRows, rowsFromSheet } from './data/tableUtils'
+import { profileRows, rowsFromSheet } from './data/tableUtils'
 import { buildBaselinePublicationTable, buildCustomPublicationTable, publicationTableToRows, type CustomPublicationSource, type PublicationTable } from './export/publicationTables'
 import type { ColumnType, Row, TypeOverrides } from './data/types'
 import { getModelPlugin, modelPlugins } from './models/registry'
 import type { InferenceConfig, ModelConfig, ModelParamValue, ModelPlugin, ModelResult, SpatialWeightsParam } from './models/types'
 import { formatMetricValue, columnLabels, formatResultValue } from './components/results/resultFormat'
+import { deriveResultInsights } from './components/results/resultInsights'
 import { ResultReadingPanel } from './components/results'
 import {
   allModelCategory,
   dataPreviewOverscanRows,
   dataPreviewRowHeight,
   dataPreviewVisibleRows,
-  layoutStorageKey,
   modelUsageStorageKey,
   snapshotStorageKey,
 } from './constants/workbench'
@@ -47,12 +47,35 @@ const stableMaturity: NonNullable<ModelPlugin['maturity']> = {
   description: '浏览器内结果可用于常规探索分析。',
 }
 
+const noModelPlugin: ModelPlugin = {
+  id: '',
+  name: '尚未选择模型',
+  nodeLabel: '尚未选择模型',
+  panelLabel: 'No model selected',
+  resultLabel: '结果',
+  description: '请先从模型库选择并应用一个分析模型。',
+  methodLabel: '',
+  shortName: '',
+  fullName: 'No model selected',
+  category: '未选择',
+  keywords: [],
+  requiresTarget: false,
+  targetLabel: '因变量 Y',
+  featuresLabel: '自变量 X',
+  downloadName: 'visual-stats-report.csv',
+  supportsCategoricalFeatures: false,
+  supportsInference: false,
+  getDefaultConfig: () => ({ target: '', features: [], params: {} }),
+  sanitizeConfig: () => ({ target: '', features: [], params: {} }),
+  getFormula: () => '尚未完成变量设定',
+  getSettings: () => [],
+  fit: () => {
+    throw new Error('请先选择模型。')
+  },
+  exportCsv: () => '',
+}
+
 const typeOptions: ColumnType[] = ['numeric', 'category', 'date', 'text', 'empty']
-const missingOptions: Array<{ value: DataPrepConfig['missingStrategy']; label: string }> = [
-  { value: 'drop', label: '删除含缺失行' },
-  { value: 'mean', label: '均值填充' },
-  { value: 'median', label: '中位数填充' },
-]
 
 const previewValue = (value: Row[string]) => {
   if (value === null || value === undefined || value === '') return 'NA'
@@ -125,6 +148,14 @@ type RunTask = {
   estimatedMs: number
 }
 
+type RunFailureDialog = {
+  message: string
+  modelName: string
+  formula: string
+}
+
+type WorkspaceTab = 'workbench' | 'publication'
+
 type ExportFormat = 'csv' | 'excel' | 'html' | 'word' | 'json'
 
 type ExportItem = {
@@ -156,7 +187,10 @@ type CustomPublicationFormatRules = {
   booleanDisplay: 'yes-no' | 'yes-blank' | 'check'
 }
 
+type CustomPublicationMode = 'current-three-line' | 'custom'
+
 type CustomPublicationConfig = {
+  mode: CustomPublicationMode
   title: string
   note: string
   selectedSourceIds: string[]
@@ -178,69 +212,20 @@ type CustomPublicationTemplate = {
   config: CustomPublicationConfig
 }
 
-type CustomPublicationPresetId = 'baseline' | 'heterogeneity' | 'robustness' | 'endogeneity'
-
 type CustomPublicationDragItem = {
   kind: 'column' | 'variable' | 'statistic'
   id: string
 }
 
-type ProfessionalModelPayload = {
-  taskId: string
-  modelId: string
-  rows: Row[]
-  config: ModelConfig
-  inference?: InferenceConfig
-}
+type WorkflowStep = 'model' | 'upload' | 'roles' | 'variables' | 'run' | 'results'
+type SnapshotViewFilter = 'recent' | 'pinned' | 'favorite' | 'all'
 
-type ProfessionalModelResponse = {
-  result?: ModelResult
-  logs?: RunLogEntry[]
-  backend?: string
-  error?: string
-}
-
-type ProfessionalEnvironmentStatus = {
-  modelId: string
-  family: string
-  status: 'checking' | 'ready' | 'partial' | 'fallback' | 'missing' | 'web' | 'error'
-  activeBackend: string
-  message: string
-  python?: {
-    available: boolean
-    path: string
-    version: string
-    ok: boolean
-  }
-  packages?: Record<string, boolean>
-  missingProfessional?: string[]
-  missingLightweight?: string[]
-  professionalReady?: boolean
-  lightweightReady?: boolean
-  checkedAt?: string
-}
-
-type ProfessionalInstallScope = 'lightweight' | 'professional'
-
-type ProfessionalInstallStatus = {
-  status: 'idle' | 'installing' | 'success' | 'error'
-  scope?: ProfessionalInstallScope
-  message: string
-  stdout?: string
-  stderr?: string
-  missingAfterInstall?: string[]
-}
-
-type ProfessionalInstallResponse = {
-  success: boolean
-  message: string
-  installed?: string[]
-  stdout?: string
-  stderr?: string
-  command?: string
-  returnCode?: number
-  missingAfterInstall?: string[]
-}
+const snapshotFilterOptions: Array<{ id: SnapshotViewFilter; label: string }> = [
+  { id: 'recent', label: '最近' },
+  { id: 'pinned', label: '置顶' },
+  { id: 'favorite', label: '收藏' },
+  { id: 'all', label: '全部' },
+]
 
 declare global {
   interface Window {
@@ -250,9 +235,6 @@ declare global {
         electron: string
         chrome: string
       }
-      runProfessionalModel?: (payload: ProfessionalModelPayload) => Promise<ProfessionalModelResponse>
-      checkProfessionalEnvironment?: (payload: { modelId: string }) => Promise<ProfessionalEnvironmentStatus>
-      installProfessionalDependencies?: (payload: { modelId: string; scope: ProfessionalInstallScope }) => Promise<ProfessionalInstallResponse>
     }
   }
 }
@@ -289,6 +271,14 @@ type PendingImport = {
   roles: DataRoles
 }
 
+type MissingValueAlert = {
+  fileName: string
+  rows: Row[]
+  missingCells: number
+  affectedRows: number
+  fields: Array<{ name: string; missing: number }>
+}
+
 type PanelBalanceDiagnosis = {
   status: 'not-configured' | 'balanced' | 'unbalanced'
   title: string
@@ -310,6 +300,41 @@ const emptyDataRoles: DataRoles = {
   groupFields: [],
 }
 
+const isMissingCell = (value: Row[string]) => value === null || value === undefined || value === ''
+
+const summarizeMissingValues = (rows: Row[], fileName: string): MissingValueAlert | null => {
+  const fields = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+  const fieldCounts = new Map<string, number>()
+  let missingCells = 0
+  let affectedRows = 0
+
+  rows.forEach((row) => {
+    let rowHasMissing = false
+
+    fields.forEach((field) => {
+      if (!isMissingCell(row[field])) return
+
+      rowHasMissing = true
+      missingCells += 1
+      fieldCounts.set(field, (fieldCounts.get(field) ?? 0) + 1)
+    })
+
+    if (rowHasMissing) affectedRows += 1
+  })
+
+  if (missingCells === 0) return null
+
+  return {
+    fileName,
+    rows,
+    missingCells,
+    affectedRows,
+    fields: [...fieldCounts.entries()]
+      .map(([name, missing]) => ({ name, missing }))
+      .sort((left, right) => right.missing - left.missing || left.name.localeCompare(right.name)),
+  }
+}
+
 type ParameterField = NonNullable<ModelPlugin['parameterSchema']>[number]
 type ParameterSectionId = 'fields' | 'estimation' | 'advanced'
 type ModelUsageMap = Record<string, { usedCount: number; lastUsedAt: string }>
@@ -329,10 +354,8 @@ const parameterSectionMeta: Record<ParameterSectionId, { title: string; descript
   },
 }
 
-const advancedParameterIds = new Set(['neighborKey', 'weightField', 'spatialWeights', 'topicField', 'textField'])
-const slowModelIds = new Set(['mediation-analysis', 'moderated-mediation', 'bertopic', 'reghdfe-regression', 'xtreg-fixed-effects'])
-const professionalBackendModelIds = new Set(['bertopic'])
-const isProfessionalBackendModel = (modelId: string) => professionalBackendModelIds.has(modelId) || modelId.startsWith('spatial-')
+const advancedParameterIds = new Set(['neighborKey', 'weightField', 'spatialWeights'])
+const slowModelIds = new Set(['mediation-analysis', 'moderated-mediation', 'reghdfe-regression', 'xtreg-fixed-effects'])
 
 const modelUseCases: Record<string, string> = {
   'frequency-analysis': '查看分类、文本或时间字段的取值分布。',
@@ -364,10 +387,9 @@ const modelUseCases: Record<string, string> = {
   'logit-regression': '估计二分类结果发生概率及 Odds Ratio。',
   'descriptive-statistics': '批量查看数值变量的样本量、均值和范围。',
   'correlation-analysis': '查看多个数值变量之间的 Pearson 相关关系。',
-  bertopic: '从文本字段中抽取主题和代表关键词。',
 }
 
-const modelCategoryOrder = ['数据探索', '关系分析', '差异检验', '基础回归', '面板与固定效应', '机制检验', '扩展模型', '文本分析']
+const modelCategoryOrder = ['数据探索', '关系分析', '差异检验', '基础回归', '面板与固定效应', '机制检验', '扩展模型']
 
 const modelCategoryOverrides: Record<string, string> = {
   'frequency-analysis': '数据探索',
@@ -399,7 +421,6 @@ const modelCategoryOverrides: Record<string, string> = {
   'spatial-panel-sdm': '扩展模型',
   'spatial-logit': '扩展模型',
   'threshold-regression': '扩展模型',
-  bertopic: '文本分析',
 }
 
 const getModelCategory = (plugin: ModelPlugin) => modelCategoryOverrides[plugin.id] ?? plugin.category
@@ -419,36 +440,75 @@ const selectedParamValues = (config: ModelConfig, field: ParameterField) => {
   return typeof value === 'string' && value ? [value] : []
 }
 
+const createEmptyModelConfig = (plugin: ModelPlugin | null): ModelConfig => {
+  const params: Record<string, ModelParamValue> = {}
+
+  plugin?.parameterSchema?.forEach((field) => {
+    if (field.kind === 'number') {
+      params[field.id] = field.defaultValue ?? 0
+    } else if (field.kind === 'columns') {
+      params[field.id] = []
+    } else {
+      params[field.id] = ''
+    }
+  })
+
+  return { target: '', features: [], params }
+}
+
+const removeImplicitColumnDefaults = (
+  plugin: ModelPlugin,
+  sourceConfig: ModelConfig,
+  sanitizedConfig: ModelConfig,
+  featureColumns: string[],
+  targetColumns: string[],
+): ModelConfig => {
+  if (!plugin.parameterSchema) {
+    return {
+      ...sanitizedConfig,
+      target: sourceConfig.target ? sanitizedConfig.target : '',
+      features: sourceConfig.features.length > 0 ? sanitizedConfig.features : [],
+    }
+  }
+
+  const params: Record<string, ModelParamValue> = { ...(sanitizedConfig.params ?? {}) }
+
+  plugin.parameterSchema.forEach((field) => {
+    if (field.kind === 'number') return
+
+    const sourceValue = sourceConfig.params?.[field.id]
+    const allowedColumns = field.role === 'target' ? targetColumns : featureColumns
+
+    if (field.kind === 'columns') {
+      params[field.id] = Array.isArray(sourceValue) ? sourceValue.filter((value) => allowedColumns.includes(value)) : []
+      return
+    }
+
+    if (field.kind === 'column') {
+      params[field.id] = typeof sourceValue === 'string' && allowedColumns.includes(sourceValue) ? sourceValue : ''
+      return
+    }
+
+    params[field.id] = sourceValue ?? ''
+  })
+
+  const target = typeof params.target === 'string' ? params.target : ''
+  const explicitFeatureFields = new Set(
+    plugin.parameterSchema
+      .filter((field) => field.kind !== 'number' && field.kind !== 'file' && field.role === 'feature')
+      .flatMap((field) => selectedParamValues({ ...sanitizedConfig, params }, field)),
+  )
+  const features = sanitizedConfig.features.filter((field) => explicitFeatureFields.has(field) && field !== target)
+
+  return {
+    ...sanitizedConfig,
+    params,
+    target,
+    features,
+  }
+}
+
 const getModelUseCase = (plugin: ModelPlugin) => modelUseCases[plugin.id] ?? plugin.description
-
-const professionalStatusLabels: Record<ProfessionalEnvironmentStatus['status'], { label: string; tone: string }> = {
-  checking: { label: '检测中', tone: 'checking' },
-  ready: { label: '专业环境已就绪', tone: 'ready' },
-  partial: { label: '轻量后端可用', tone: 'partial' },
-  fallback: { label: '将使用降级路径', tone: 'fallback' },
-  missing: { label: '专业环境不可用', tone: 'missing' },
-  web: { label: '桌面端专属', tone: 'web' },
-  error: { label: '检测失败', tone: 'error' },
-}
-
-const backendLabels: Record<string, string> = {
-  professional: 'Python 专业后端',
-  lightweight: 'Python 轻量后端',
-  'python-fallback': 'Python 降级后端',
-  browser: '浏览器内置估计',
-  checking: '检测中',
-}
-
-const formatCheckTime = (value?: string) => {
-  if (!value) return '尚未完成'
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? '尚未完成' : parsed.toLocaleString()
-}
-
-const extractMetricNumber = (result: ModelResult | null, label: string) => {
-  const metric = result?.summary.find((entry) => entry.label === label)
-  return typeof metric?.value === 'number' ? metric.value : null
-}
 
 const estimateRunDuration = (modelId: string, rowCount: number) => {
   const rowFactor = Math.min(5000, rowCount) / 5000
@@ -483,14 +543,7 @@ const parenthesisModeLabel = (mode: CustomPublicationFormatRules['parenthesisMod
 const buildCustomPublicationNote = (formatRules: CustomPublicationFormatRules) =>
   `注：稳健标准误；括号内为 ${parenthesisModeLabel(formatRules.parenthesisMode)}；* p<${formatPublicationThreshold(formatRules.starLevels.one)}，** p<${formatPublicationThreshold(
     formatRules.starLevels.two,
-  )}，*** p<${formatPublicationThreshold(formatRules.starLevels.three)}`
-
-const customPublicationPresetMeta: Array<{ id: CustomPublicationPresetId; label: string; detail: string }> = [
-  { id: 'baseline', label: '基准回归', detail: '保留 Controls、固定效应、N 与 Adj-R²，适合主回归结果。' },
-  { id: 'heterogeneity', label: '异质性', detail: '强调分组列头，适合不同样本或机制分组并排展示。' },
-  { id: 'robustness', label: '稳健性', detail: '适合多设定对照，突出变量一致性与统计稳定性。' },
-  { id: 'endogeneity', label: '内生性', detail: '适合工具变量、替代解释和识别策略的并列汇报。' },
-]
+  )}，*** p<${formatPublicationThreshold(formatRules.starLevels.three)}。`
 
 const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => ({
   coefficientDigits: 4,
@@ -508,6 +561,7 @@ const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => 
 })
 
 const defaultCustomPublicationConfig = (): CustomPublicationConfig => ({
+  mode: 'current-three-line',
   title: '表 1：自定义回归结果',
   note: buildCustomPublicationNote(defaultCustomPublicationFormatRules()),
   selectedSourceIds: [],
@@ -527,6 +581,7 @@ const normalizeCustomPublicationConfig = (candidate?: Partial<CustomPublicationC
   return {
     ...base,
     ...candidate,
+    mode: candidate?.mode === 'custom' ? 'custom' : 'current-three-line',
     columns: candidate?.columns ?? base.columns,
     columnOrder: candidate?.columnOrder ?? base.columnOrder,
     variableOrder: candidate?.variableOrder ?? base.variableOrder,
@@ -586,8 +641,6 @@ const moveOrderedItem = (items: string[], id: string, toIndex: number) => {
   return next
 }
 
-const isDefaultCustomPublicationConfig = (config: CustomPublicationConfig) => JSON.stringify(config) === JSON.stringify(defaultCustomPublicationConfig())
-
 const loadSnapshots = () => {
   try {
     const stored = window.localStorage.getItem(snapshotStorageKey)
@@ -621,15 +674,6 @@ const withoutField = (fields: string[], field: string) => fields.filter((entry) 
 const compactValue = (value: Row[string]) => (value === null || value === undefined || value === '' ? '' : String(value))
 
 const createRunSignature = (payload: unknown) => JSON.stringify(payload)
-
-const loadLayoutPreference = () => {
-  try {
-    const stored = window.localStorage.getItem(layoutStorageKey)
-    return stored ? (JSON.parse(stored) as { historyCollapsed?: boolean }) : {}
-  } catch {
-    return {}
-  }
-}
 
 const loadModelUsage = () => {
   try {
@@ -901,7 +945,6 @@ const inferDataRoles = (rows: Row[]): DataRoles => {
 }
 
 function App() {
-  const initialLayout = useMemo(() => loadLayoutPreference(), [])
   const [rows, setRows] = useState<Row[]>([])
   const [fileName, setFileName] = useState('')
   const [uploadError, setUploadError] = useState('')
@@ -914,9 +957,11 @@ function App() {
     standardError: 'ols',
     clusterField: '',
   })
-  const [activeModelId, setActiveModelId] = useState('linear-regression')
+  const [activeModelId, setActiveModelId] = useState<string | null>(null)
+  const [draftModelId, setDraftModelId] = useState<string | null>(null)
   const [isDataModalOpen, setIsDataModalOpen] = useState(false)
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
+  const [missingValueAlert, setMissingValueAlert] = useState<MissingValueAlert | null>(null)
   const [dataRoles, setDataRoles] = useState<DataRoles>(emptyDataRoles)
   const [isModelLibraryOpen, setIsModelLibraryOpen] = useState(false)
   const [modelSearch, setModelSearch] = useState('')
@@ -930,8 +975,8 @@ function App() {
   const [customPublicationTemplates, setCustomPublicationTemplates] = useState<CustomPublicationTemplate[]>(loadCustomPublicationTemplates)
   const [customPublicationDefaultTemplateId, setCustomPublicationDefaultTemplateId] = useState(loadCustomPublicationDefaultTemplateId)
   const [draggingPublicationItem, setDraggingPublicationItem] = useState<CustomPublicationDragItem | null>(null)
-  const [workspaceModeOverride, setWorkspaceModeOverride] = useState<null | 'publication'>(null)
-  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(Boolean(initialLayout.historyCollapsed))
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('workbench')
+  const [snapshotViewFilter, setSnapshotViewFilter] = useState<SnapshotViewFilter>('recent')
   const [modelUsage, setModelUsage] = useState<ModelUsageMap>(loadModelUsage)
   const [snapshots, setSnapshots] = useState<WorkbenchSnapshot[]>(loadSnapshots)
   const [renamingSnapshotId, setRenamingSnapshotId] = useState('')
@@ -947,15 +992,17 @@ function App() {
   const [isModelRunning, setIsModelRunning] = useState(false)
   const [runStatus, setRunStatus] = useState('')
   const [runTask, setRunTask] = useState<RunTask | null>(null)
-  const [professionalEnv, setProfessionalEnv] = useState<ProfessionalEnvironmentStatus | null>(null)
-  const [professionalInstall, setProfessionalInstall] = useState<ProfessionalInstallStatus>({ status: 'idle', message: '' })
-  const [environmentCheckNonce, setEnvironmentCheckNonce] = useState(0)
+  const [runFailureDialog, setRunFailureDialog] = useState<RunFailureDialog | null>(null)
+  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('model')
+  const [isVariableSetupOpen, setIsVariableSetupOpen] = useState(false)
   const [dataPreviewScrollTop, setDataPreviewScrollTop] = useState(0)
   const runCancelRef = useRef(false)
   const runWorkerRef = useRef<Worker | null>(null)
-  const activeModel = getModelPlugin(activeModelId)
+  const hasActiveModel = Boolean(activeModelId)
+  const activeModel = activeModelId ? getModelPlugin(activeModelId) : noModelPlugin
+  const draftModel = draftModelId ? getModelPlugin(draftModelId) : null
   const modelMaturity = activeModel.maturity ?? stableMaturity
-  const activeModelUsesProfessionalBackend = isProfessionalBackendModel(activeModel.id)
+  const canImportData = hasActiveModel && !isModelRunning
   const hasDataset = rows.length > 0
   const profiles = useMemo(() => profileRows(rows, typeOverrides), [rows, typeOverrides])
   const previewColumns = useMemo(() => Object.keys(rows[0] ?? {}), [rows])
@@ -973,10 +1020,10 @@ function App() {
     [modelProfiles],
   )
   const eligibleFeatureColumns = useMemo(
-    () => getFeatureColumnsForPlugin(activeModel, featureProfiles, prepConfig.categoricalEncoding),
-    [activeModel, featureProfiles, prepConfig.categoricalEncoding],
+    () => (hasActiveModel ? getFeatureColumnsForPlugin(activeModel, featureProfiles, prepConfig.categoricalEncoding) : []),
+    [activeModel, featureProfiles, hasActiveModel, prepConfig.categoricalEncoding],
   )
-  const [modelConfig, setModelConfig] = useState<ModelConfig>(() => activeModel.getDefaultConfig([]))
+  const [modelConfig, setModelConfig] = useState<ModelConfig>(() => createEmptyModelConfig(activeModel))
 
   useEffect(() => {
     if (!isModelRunning) return undefined
@@ -997,61 +1044,6 @@ function App() {
     return () => window.clearInterval(intervalId)
   }, [isModelRunning])
 
-  useEffect(() => {
-    if (!activeModelUsesProfessionalBackend) {
-      Promise.resolve().then(() => setProfessionalInstall({ status: 'idle', message: '' }))
-      return undefined
-    }
-
-    let cancelled = false
-    const applyEnvironmentStatus = (status: ProfessionalEnvironmentStatus) => {
-      if (!cancelled) setProfessionalEnv(status)
-    }
-    const checker = window.visualStatsDesktop?.checkProfessionalEnvironment
-    if (!checker) {
-      Promise.resolve().then(() =>
-        applyEnvironmentStatus({
-          modelId: activeModel.id,
-          family: activeModel.id === 'bertopic' ? 'bertopic' : 'spatial',
-          status: 'web',
-          activeBackend: 'browser',
-          message: '当前为 Web 环境，专业 Python 后端仅在桌面端可用；运行时会使用浏览器内置估计。',
-          checkedAt: new Date().toISOString(),
-        }),
-      )
-      return undefined
-    }
-
-    Promise.resolve().then(() =>
-      applyEnvironmentStatus({
-        modelId: activeModel.id,
-        family: activeModel.id === 'bertopic' ? 'bertopic' : 'spatial',
-        status: 'checking',
-        activeBackend: 'checking',
-        message: '正在检测 Python、专业依赖和可用后端。',
-        checkedAt: new Date().toISOString(),
-      }),
-    )
-    checker({ modelId: activeModel.id })
-      .then((status) => {
-        applyEnvironmentStatus(status)
-      })
-      .catch((error) => {
-        applyEnvironmentStatus({
-          modelId: activeModel.id,
-          family: activeModel.id === 'bertopic' ? 'bertopic' : 'spatial',
-          status: 'error',
-          activeBackend: 'browser',
-          message: error instanceof Error ? error.message : '环境检测失败，将使用浏览器内置估计。',
-          checkedAt: new Date().toISOString(),
-        })
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [activeModel.id, activeModelUsesProfessionalBackend, environmentCheckNonce])
-
   useEffect(
     () => () => {
       runCancelRef.current = true
@@ -1059,14 +1051,6 @@ function App() {
     },
     [],
   )
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(layoutStorageKey, JSON.stringify({ historyCollapsed: isHistoryCollapsed }))
-    } catch {
-      // Layout preferences are best-effort; analysis data should never depend on them.
-    }
-  }, [isHistoryCollapsed])
 
   useEffect(() => {
     try {
@@ -1101,8 +1085,17 @@ function App() {
   }, [customPublicationConfig])
 
   const sanitizedConfig = useMemo(
-    () => activeModel.sanitizeConfig(modelConfig, eligibleFeatureColumns, numericColumns),
-    [activeModel, eligibleFeatureColumns, modelConfig, numericColumns],
+    () =>
+      hasActiveModel
+        ? removeImplicitColumnDefaults(
+            activeModel,
+            modelConfig,
+            activeModel.sanitizeConfig(modelConfig, eligibleFeatureColumns, numericColumns),
+            eligibleFeatureColumns,
+            numericColumns,
+          )
+        : createEmptyModelConfig(null),
+    [activeModel, eligibleFeatureColumns, hasActiveModel, modelConfig, numericColumns],
   )
   const selectedTarget = sanitizedConfig.target
   const selectedFeatures = sanitizedConfig.features
@@ -1133,16 +1126,16 @@ function App() {
   const currentRunSignature = useMemo(
     () =>
       createRunSignature({
-        modelId: activeModel.id,
+        modelId: activeModelId,
         fileName,
         rowCount: rows.length,
         fields: profiles.map((profile) => [profile.name, profile.type, profile.missing, profile.unique]),
         dataRoles,
         prepConfig,
-        inference: activeModel.supportsInference ? effectiveInference : undefined,
+        inference: hasActiveModel && activeModel.supportsInference ? effectiveInference : undefined,
         config: sanitizedConfig,
       }),
-    [activeModel.id, activeModel.supportsInference, dataRoles, effectiveInference, fileName, prepConfig, profiles, rows.length, sanitizedConfig],
+    [activeModel, activeModelId, dataRoles, effectiveInference, fileName, hasActiveModel, prepConfig, profiles, rows.length, sanitizedConfig],
   )
   const hasStaleResult = Boolean(runState.result && runState.signature !== currentRunSignature)
   const result = hasStaleResult ? null : runState.result
@@ -1181,7 +1174,7 @@ function App() {
 	  )
   const publicationSources = useMemo(() => {
     const currentSource =
-      result && sanitizedConfig
+      result && hasActiveModel
         ? [
             {
               id: 'current',
@@ -1209,7 +1202,7 @@ function App() {
       }))
 
     return [...currentSource, ...snapshotSources]
-  }, [activeModel, dataRoles, result, sanitizedConfig, snapshots])
+  }, [activeModel, dataRoles, hasActiveModel, result, sanitizedConfig, snapshots])
   const hasPublicationSources = publicationSources.some((source) => source.result.tables.some((table) => table.id === 'coefficients'))
   const exportItems = useMemo<ExportItem[]>(() => {
     if (!result) return []
@@ -1237,9 +1230,11 @@ function App() {
     ]
   }, [hasPublicationSources, publicationSources.length, result, runLogs.length])
   const selectedExportItemSet = useMemo(() => new Set(selectedExportItemIds), [selectedExportItemIds])
+  const hasCurrentPublicationSource = publicationSources.some((source) => source.id === 'current')
+  const defaultCustomPublicationSourceIds = useMemo(() => (hasCurrentPublicationSource ? ['current'] : []), [hasCurrentPublicationSource])
   const effectiveCustomPublicationSourceIds = useMemo(
-    () => (customPublicationConfig.selectedSourceIds.length > 0 ? customPublicationConfig.selectedSourceIds : publicationSources.slice(0, 6).map((source) => source.id)),
-    [customPublicationConfig.selectedSourceIds, publicationSources],
+    () => (customPublicationConfig.selectedSourceIds.length > 0 ? customPublicationConfig.selectedSourceIds : defaultCustomPublicationSourceIds),
+    [customPublicationConfig.selectedSourceIds, defaultCustomPublicationSourceIds],
   )
   const customPublicationSelectedSet = useMemo(() => new Set(effectiveCustomPublicationSourceIds), [effectiveCustomPublicationSourceIds])
   const selectedPublicationSources = useMemo(
@@ -1330,15 +1325,14 @@ function App() {
   }, [customPublicationConfig.statisticLabels, customPublicationConfig.statisticOrder, selectedPublicationSources])
   const disabledCustomPublicationStatisticSet = useMemo(() => new Set(customPublicationConfig.disabledStatisticIds), [customPublicationConfig.disabledStatisticIds])
   const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
+  const isCustomPublicationDefaultTableMode = customPublicationConfig.mode === 'current-three-line' && Boolean(result && hasActiveModel)
   const customPublicationPreviewTable = hasPublicationSources ? buildCustomPublicationTableFromConfig() : null
   const customPublicationPreviewHtml = customPublicationPreviewTable ? buildPublicationTableHtml(customPublicationPreviewTable) : ''
+  const canExportCustomPublication = Boolean(customPublicationPreviewTable) && !isExporting
   const matchedCustomPublicationTemplate = useMemo(() => {
     const currentSignature = JSON.stringify(customPublicationConfig)
     return customPublicationTemplates.find((template) => JSON.stringify(template.config) === currentSignature) ?? null
   }, [customPublicationConfig, customPublicationTemplates])
-  const primaryDiagnostic = result?.diagnostics.find((diagnostic) => diagnostic.kind === 'actual-vs-fitted')
-  const correlationMatrix = result?.diagnostics.find((diagnostic) => diagnostic.kind === 'correlation-matrix')
-  const error = uploadError || modelError
   const modelOrder = useMemo(() => new Map(modelPlugins.map((plugin, index) => [plugin.id, index])), [])
   const modelCategories = useMemo(
     () => [allModelCategory, ...modelCategoryOrder.filter((category) => modelPlugins.some((plugin) => getModelCategory(plugin) === category))],
@@ -1360,8 +1354,8 @@ function App() {
       : categoryFiltered
 
     return [...matched].sort((left, right) => {
-      if (left.id === activeModel.id) return -1
-      if (right.id === activeModel.id) return 1
+      if (activeModelId && left.id === activeModelId) return -1
+      if (activeModelId && right.id === activeModelId) return 1
       const leftUsage = modelUsage[left.id]
       const rightUsage = modelUsage[right.id]
       const lastUsedDelta = new Date(rightUsage?.lastUsedAt ?? 0).getTime() - new Date(leftUsage?.lastUsedAt ?? 0).getTime()
@@ -1370,35 +1364,15 @@ function App() {
       if (countDelta !== 0) return countDelta
       return (modelOrder.get(left.id) ?? 0) - (modelOrder.get(right.id) ?? 0)
     })
-  }, [activeModel.id, modelOrder, modelSearch, modelUsage, selectedModelCategory])
+  }, [activeModelId, modelOrder, modelSearch, modelUsage, selectedModelCategory])
   const recentModelPlugins = useMemo(
     () =>
       modelPlugins
-        .filter((plugin) => plugin.id !== activeModel.id && modelUsage[plugin.id]?.lastUsedAt)
+        .filter((plugin) => plugin.id !== activeModelId && modelUsage[plugin.id]?.lastUsedAt)
         .sort((left, right) => new Date(modelUsage[right.id]?.lastUsedAt ?? 0).getTime() - new Date(modelUsage[left.id]?.lastUsedAt ?? 0).getTime())
         .slice(0, 5),
-    [activeModel.id, modelUsage],
+    [activeModelId, modelUsage],
   )
-  const recommendedModels = useMemo(() => {
-    if (!hasDataset) return []
-    const hasPanel = dataRoles.idFields.length > 0 && Boolean(dataRoles.timeField)
-    const hasCategorical = profiles.some((p) => p.type === 'category')
-    const numericCount = profiles.filter((p) => p.type === 'numeric').length
-    const hasText = profiles.some((p) => p.type === 'text')
-    const recs: Array<{ id: string; reason: string }> = []
-
-    if (numericCount >= 2) recs.push({ id: 'linear-regression', reason: '数据含多个数值变量' })
-    if (numericCount >= 3) recs.push({ id: 'correlation-analysis', reason: '探索变量间线性关系' })
-    if (hasCategorical && numericCount >= 1) recs.push({ id: 'category-summary', reason: '按类别比较数值' })
-    if (hasCategorical) recs.push({ id: 'crosstab-chi-square', reason: '含分类变量可做关联检验' })
-    if (hasPanel) recs.push({ id: 'xtreg-fixed-effects', reason: '检测到面板结构' })
-    if (hasText) recs.push({ id: 'bertopic', reason: '含文本字段' })
-    if (numericCount >= 1) recs.push({ id: 'descriptive-statistics', reason: '快速概览数据分布' })
-
-    return recs
-      .filter((rec) => rec.id !== activeModel.id && modelPlugins.some((p) => p.id === rec.id))
-      .slice(0, 3)
-  }, [activeModel.id, dataRoles, hasDataset, profiles])
   const parameterSections = useMemo(() => {
     const schema = activeModel.parameterSchema ?? []
     return (Object.keys(parameterSectionMeta) as ParameterSectionId[])
@@ -1413,6 +1387,10 @@ function App() {
     const issues: ValidationIssue[] = []
 
     if (!hasDataset) return issues
+    if (!hasActiveModel) {
+      issues.push({ level: 'error', message: '请先选择一个分析模型。' })
+      return issues
+    }
 
     if (activeModel.parameterSchema) {
       activeModel.parameterSchema.forEach((field) => {
@@ -1475,61 +1453,43 @@ function App() {
     }
 
     return issues
-  }, [activeModel, effectiveInference.clusterField, hasDataset, inferenceConfig.standardError, rows, sanitizedConfig, selectedFeatures.length, selectedTarget])
+  }, [activeModel, effectiveInference.clusterField, hasActiveModel, hasDataset, inferenceConfig.standardError, rows, sanitizedConfig, selectedFeatures.length, selectedTarget])
   const validationErrors = validationIssues.filter((issue) => issue.level === 'error')
-  const resultInsights = useMemo(() => {
-    if (!result) return []
-
-    const insights: string[] = []
-    const mainTable = result.tables.find((table) => table.id === 'coefficients') ?? result.tables[0]
-    const rSquared = extractMetricNumber(result, 'R-squared')
-    if (rSquared !== null) {
-      const quality = rSquared >= 0.7 ? '较强' : rSquared >= 0.4 ? '中等' : rSquared >= 0.15 ? '较弱' : '很弱'
-      insights.push(`模型解释力${quality}（R² = ${formatNumber(rSquared, 3)}），自变量整体能解释因变量约 ${formatNumber(rSquared * 100, 1)}% 的变异。`)
-    }
-    const pValue = extractMetricNumber(result, 'p-value') ?? extractMetricNumber(result, 'Prob > F') ?? extractMetricNumber(result, 'Sobel p')
-    if (pValue !== null) {
-      const sigLevel = pValue < 0.001 ? '在 0.1% 水平高度显著' : pValue < 0.01 ? '在 1% 水平显著' : pValue < 0.05 ? '在 5% 水平显著' : pValue < 0.1 ? '在 10% 水平边际显著' : '未达到常用显著性阈值'
-      insights.push(`整体模型检验 ${sigLevel}（p = ${formatResultValue(pValue, 'pValue')}）。`)
-    }
-    const nObs = extractMetricNumber(result, 'N') ?? extractMetricNumber(result, 'Observations')
-    if (nObs !== null) {
-      insights.push(`共纳入 ${formatNumber(nObs, 0)} 个有效观测进入估计。`)
-    }
-    if (mainTable && mainTable.id === 'coefficients') {
-      const sigRows = mainTable.rows.filter((row) => {
-        const p = typeof row.pValue === 'number' ? row.pValue : 1
-        return p < 0.05
-      })
-      if (sigRows.length > 0) {
-        const names = sigRows.slice(0, 3).map((row) => `${row.term ?? row.variable ?? ''}`).filter(Boolean)
-        insights.push(`${sigRows.length} 个变量在 5% 水平显著${names.length > 0 ? `，包括 ${names.join('、')}` : ''}。`)
-      } else if (mainTable.rows.length > 0) {
-        insights.push('当前模型中没有变量在 5% 水平显著，建议检查变量选择或模型设定。')
-      }
-    }
-
-    return insights.slice(0, 4)
-  }, [result])
+  const resultInsights = useMemo(() => deriveResultInsights(result), [result])
+  const hasRoleSetting = dataRoles.idFields.length > 0 || Boolean(dataRoles.timeField) || dataRoles.groupFields.length > 0
+  const effectiveWorkflowStep = useMemo<WorkflowStep>(() => {
+    if (isModelRunning) return 'run'
+    if (!hasActiveModel) return 'model'
+    if (modelError) return 'variables'
+    if (result && !hasStaleResult) return 'results'
+    if (result && hasStaleResult && workflowStep === 'results') return 'variables'
+    if (!hasDataset && workflowStep !== 'model') return 'upload'
+    if (workflowStep === 'run') return 'variables'
+    return workflowStep
+  }, [hasActiveModel, hasDataset, hasStaleResult, isModelRunning, modelError, result, workflowStep])
   const nextAction = useMemo(() => {
-    if (!hasDataset) return '下一步：导入 CSV 或 XLSX 数据。'
-    if (dataRoles.idFields.length === 0 && !dataRoles.timeField && dataRoles.groupFields.length === 0) return '建议：设置 ID / Time / Group，用于面板数据判断和聚类字段推荐。'
+    if (effectiveWorkflowStep === 'model') return hasActiveModel ? '已选择模型，可以继续导入数据。' : '请先选择一个分析模型。'
+    if (effectiveWorkflowStep === 'upload') return '下一步：导入 CSV 或 XLSX 数据。'
+    if (effectiveWorkflowStep === 'roles') return '下一步：设置 ID / Time / Group 字段。'
+    if (effectiveWorkflowStep === 'variables') return '下一步：选择因变量、自变量和控制变量。'
+    if (effectiveWorkflowStep === 'run') return runTask?.phase || '模型正在运行，参数已临时锁定。'
     if (validationErrors.length > 0) return `请先处理：${validationErrors[0].message}`
-    if (isModelRunning) return runTask?.phase || '模型正在运行，参数已临时锁定。'
     if (hasStaleResult) return '参数已经变更，建议重新运行模型刷新结果。'
     if (!result) return '参数已就绪，可以运行模型。'
-    return '结果已生成，可以查看结果表、诊断信息或导出 CSV。'
-  }, [dataRoles.groupFields.length, dataRoles.idFields.length, dataRoles.timeField, hasDataset, hasStaleResult, isModelRunning, result, runTask?.phase, validationErrors])
+    return '结果已生成，按系数估计、核心结论和稳定性检验顺序阅读。'
+  }, [effectiveWorkflowStep, hasActiveModel, hasStaleResult, result, runTask?.phase, validationErrors])
   const workspaceMode = useMemo<'data' | 'model' | 'result' | 'report' | 'publication'>(() => {
-    if (!hasDataset) return 'data'
-    if (workspaceModeOverride === 'publication' && result && !isModelRunning) return 'publication'
+    if (workspaceTab === 'publication') return 'publication'
     if (isExportModalOpen) return 'report'
-    if (result && !hasStaleResult && !isModelRunning) return 'result'
+    if (effectiveWorkflowStep === 'results') return 'result'
+    if (effectiveWorkflowStep === 'upload' || effectiveWorkflowStep === 'roles') return 'data'
     return 'model'
-  }, [hasDataset, hasStaleResult, isExportModalOpen, isModelRunning, result, workspaceModeOverride])
+  }, [effectiveWorkflowStep, isExportModalOpen, workspaceTab])
   const leadInsight = resultInsights[0] ?? ''
   const secondaryInsights = resultInsights.slice(1)
   const visibleSummaryMetrics = result?.summary.slice(0, 4) ?? []
+  const hasCancelledRunTask = runTask?.status === 'cancelled' && runState.signature === currentRunSignature
+  const shouldShowFocusTask = workspaceMode !== 'result' && (isModelRunning || hasStaleResult || hasCancelledRunTask)
   const roleSummary = [
     dataRoles.idFields.length > 0 ? `ID ${summarizeFields(dataRoles.idFields)}` : '',
     dataRoles.timeField ? `Time ${dataRoles.timeField}` : '',
@@ -1537,42 +1497,58 @@ function App() {
   ]
     .filter(Boolean)
     .join(' · ')
-  const activeFormula = activeModel.getFormula(sanitizedConfig)
+  const activeFormula =
+    !hasActiveModel
+      ? '尚未选择模型'
+      : !hasDataset || validationErrors.length > 0
+        ? '尚未完成变量设定'
+        : activeModel.getFormula(sanitizedConfig)
   const selectedFeatureSummary =
     selectedFeatures.length === 0
       ? '尚未选择解释变量'
       : selectedFeatures.length <= 3
         ? selectedFeatures.join('、')
         : `${selectedFeatures.slice(0, 3).join('、')} 等 ${selectedFeatures.length} 个变量`
-  const fieldReadinessSummary = activeModel.requiresTarget
-    ? `${activeModel.targetLabel}：${selectedTarget || '未设置'}`
-    : `${activeModel.featuresLabel}：${selectedFeatureSummary}`
   const modelContextLead =
-    validationErrors.length > 0
+    !isModelRunning && modelError
+      ? `模型运行失败，请调整变量后重试：${modelError}`
+      : validationErrors.length > 0
       ? validationErrors[0].message
       : activeModel.requiresTarget
         ? `${activeModel.targetLabel}已选为 ${selectedTarget || '未设置'}，${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
         : `${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
   const workspaceHeading =
-    workspaceMode === 'data'
-      ? '导入并整理数据'
-      : workspaceMode === 'model'
-        ? '配置并运行模型'
-        : workspaceMode === 'publication'
-          ? '编辑论文表'
-        : workspaceMode === 'report'
-          ? '整理并导出结果'
-          : '阅读并解释结果'
+    workspaceMode === 'publication'
+      ? '编辑论文表'
+      : workspaceMode === 'report'
+        ? '整理并导出结果'
+        : effectiveWorkflowStep === 'model'
+          ? '选择分析模型'
+          : effectiveWorkflowStep === 'upload'
+            ? '导入分析数据'
+            : effectiveWorkflowStep === 'roles'
+              ? '设置 ID 与分组字段'
+              : effectiveWorkflowStep === 'variables'
+                ? '选择变量与控制项'
+                : effectiveWorkflowStep === 'run'
+                  ? '运行模型'
+                  : '阅读并解释结果'
   const workspaceLead =
-    workspaceMode === 'data'
-      ? '先导入数据，再设置维度字段和变量角色。'
-      : workspaceMode === 'model'
-        ? '当前工作区聚焦模型设定，先确认变量和基础参数。'
-        : workspaceMode === 'publication'
-          ? '把来源列、变量行、统计行和注释整理成一张适合导出的论文表。'
-        : workspaceMode === 'report'
-          ? '选择导出内容和格式，整理本次建模输出。'
-          : '先读自然语言结论，再向下查看统计表和补充诊断。'
+    workspaceMode === 'publication'
+      ? '把来源列、变量行、统计行和注释整理成一张适合导出的论文表。'
+      : workspaceMode === 'report'
+        ? '选择导出内容和格式，整理本次建模输出。'
+        : effectiveWorkflowStep === 'model'
+          ? '先确定模型类型，右侧只保留模型选择和参数调整。'
+          : effectiveWorkflowStep === 'upload'
+            ? '导入 CSV 或 XLSX 文件，随后确认 ID、时间和分组字段。'
+            : effectiveWorkflowStep === 'roles'
+              ? '把 ID、时间和分组字段从模型变量中剥离，避免误入回归。'
+              : effectiveWorkflowStep === 'variables'
+                ? '在弹窗中设置因变量、核心自变量、控制变量和必要推断参数。'
+                : effectiveWorkflowStep === 'run'
+                  ? '运行过程中参数锁定，完成后自动进入结果阅读。'
+                  : '从系数估计开始，再阅读核心结论和稳定性检验。'
   const primaryParameterSections = parameterSections.filter((section) => section.id !== 'advanced')
   const advancedSchemaSections = parameterSections.filter((section) => section.id === 'advanced')
   const selectedSnapshotIdSet = useMemo(() => new Set(selectedSnapshotIds), [selectedSnapshotIds])
@@ -1581,6 +1557,7 @@ function App() {
       [...snapshots].sort((left, right) => {
         const pinnedDelta = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
         if (pinnedDelta !== 0) return pinnedDelta
+
         const favoriteDelta = Number(Boolean(right.favorite)) - Number(Boolean(left.favorite))
         if (favoriteDelta !== 0) return favoriteDelta
 
@@ -1588,6 +1565,23 @@ function App() {
       }),
     [snapshots],
   )
+  const filteredSnapshots = useMemo(() => {
+    if (snapshotViewFilter === 'pinned') return sortedSnapshots.filter((snapshot) => snapshot.pinned)
+    if (snapshotViewFilter === 'favorite') return sortedSnapshots.filter((snapshot) => snapshot.favorite)
+    return sortedSnapshots
+  }, [snapshotViewFilter, sortedSnapshots])
+  const visibleSnapshots = useMemo(
+    () => (snapshotViewFilter === 'recent' ? filteredSnapshots.slice(0, 3) : filteredSnapshots),
+    [filteredSnapshots, snapshotViewFilter],
+  )
+  const visibleSnapshotIds = useMemo(() => visibleSnapshots.map((snapshot) => snapshot.id), [visibleSnapshots])
+  const selectedSnapshots = useMemo(() => snapshots.filter((snapshot) => selectedSnapshotIdSet.has(snapshot.id)), [selectedSnapshotIdSet, snapshots])
+  const selectedSnapshotsAllPinned = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.pinned)
+  const selectedSnapshotsAllFavorite = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.favorite)
+  const snapshotSummaryText =
+    snapshotViewFilter === 'recent'
+      ? `最近 ${Math.min(3, sortedSnapshots.length)} 条`
+      : `${filteredSnapshots.length} 条`
 
   const applyRows = (nextRows: Row[], nextFileName: string, nextDataRoles = emptyDataRoles) => {
     const cleaned = nextRows.filter((row) => Object.values(row).some((value) => value !== null && value !== ''))
@@ -1596,17 +1590,30 @@ function App() {
       return
     }
 
-    const nextProfiles = profileRows(cleaned)
-    const nextDimensionColumns = new Set([...nextDataRoles.idFields, nextDataRoles.timeField, ...nextDataRoles.groupFields].filter(Boolean))
-    const nextModelProfiles = nextProfiles.filter((profile) => !nextDimensionColumns.has(profile.name))
-    const nextFeatureProfiles = activeModel.includeDimensionFields ? nextProfiles : nextModelProfiles
-    const nextNumeric = nextModelProfiles.filter((profile) => profile.type === 'numeric').map((profile) => profile.name)
-    const nextFeatureColumns = getFeatureColumnsForPlugin(activeModel, nextFeatureProfiles, prepConfig.categoricalEncoding)
     setRows(cleaned)
     setFileName(nextFileName)
     setDataRoles(nextDataRoles)
-    setModelConfig(activeModel.getDefaultConfig(nextFeatureColumns, nextNumeric))
+    setModelConfig(createEmptyModelConfig(activeModel))
     setTypeOverrides({})
+    setUploadError('')
+    setRunState({
+      result: null,
+      error: '',
+      logs: [{ level: 'info', message: '数据已导入，请设置变量后运行模型。' }],
+      signature: '',
+    })
+    setRunTask(null)
+    setRunFailureDialog(null)
+    setRunStatus('')
+    setWorkflowStep('roles')
+  }
+
+  const startImportWizard = (cleanedRows: Row[], nextFileName: string) => {
+    setPendingImport({
+      fileName: nextFileName,
+      rows: cleanedRows,
+      roles: inferDataRoles(cleanedRows),
+    })
     setUploadError('')
   }
 
@@ -1617,11 +1624,26 @@ function App() {
       return
     }
 
-    setPendingImport({
-      fileName: nextFileName,
-      rows: cleaned,
-      roles: inferDataRoles(cleaned),
-    })
+    const missingSummary = summarizeMissingValues(cleaned, nextFileName)
+    if (missingSummary) {
+      setPendingImport(null)
+      setMissingValueAlert(missingSummary)
+      setUploadError('')
+      return
+    }
+
+    startImportWizard(cleaned, nextFileName)
+  }
+
+  const continueImportAfterMissingAlert = () => {
+    if (!missingValueAlert) return
+
+    startImportWizard(missingValueAlert.rows, missingValueAlert.fileName)
+    setMissingValueAlert(null)
+  }
+
+  const cancelMissingValueImport = () => {
+    setMissingValueAlert(null)
     setUploadError('')
   }
 
@@ -1697,10 +1719,20 @@ function App() {
   const switchModel = (modelId: string) => {
     if (isModelRunning) return
     const nextModel = getModelPlugin(modelId)
-    const nextFeatureProfiles = nextModel.includeDimensionFields ? profiles : modelProfiles
-    const nextFeatureColumns = getFeatureColumnsForPlugin(nextModel, nextFeatureProfiles, prepConfig.categoricalEncoding)
     setActiveModelId(nextModel.id)
-    setModelConfig(nextModel.getDefaultConfig(nextFeatureColumns, numericColumns))
+    setDraftModelId(nextModel.id)
+    setModelConfig(createEmptyModelConfig(nextModel))
+    setUploadError('')
+    setRunState({
+      result: null,
+      error: '',
+      logs: [{ level: 'info', message: `已切换到${nextModel.name}，请重新设置变量后运行。` }],
+      signature: '',
+    })
+    setRunTask(null)
+    setRunFailureDialog(null)
+    setRunStatus('')
+    setWorkspaceTab('workbench')
     setModelUsage((current) => {
       const previous = current[nextModel.id]
       return {
@@ -1713,6 +1745,19 @@ function App() {
     })
     setModelSearch('')
     setIsModelLibraryOpen(false)
+    setWorkflowStep(hasDataset ? 'variables' : 'model')
+    setIsVariableSetupOpen(false)
+  }
+
+  const openModelLibrary = () => {
+    if (isModelRunning) return
+    setDraftModelId(null)
+    setIsModelLibraryOpen(true)
+  }
+
+  const applyDraftModel = () => {
+    if (isModelRunning || !draftModel) return
+    switchModel(draftModel.id)
   }
 
   const buildRunLogs = (baseLogs: RunLogEntry[], nextResult: ModelResult) =>
@@ -1764,55 +1809,18 @@ function App() {
       logs: [{ level: 'warning', message: '用户已取消本次模型运行。' }],
       signature: currentRunSignature,
     })
-  }
-
-  const installProfessionalDependencies = (scope: ProfessionalInstallScope) => {
-    const installer = window.visualStatsDesktop?.installProfessionalDependencies
-    if (!installer || !activeModelUsesProfessionalBackend || professionalInstall.status === 'installing') return
-
-    const scopeLabel = scope === 'professional' ? '完整专业依赖' : '轻量依赖'
-    const confirmed = window.confirm(`将使用当前 Python 环境安装${scopeLabel}，安装过程可能需要联网并持续数分钟。是否继续？`)
-    if (!confirmed) return
-
-    setProfessionalInstall({ status: 'installing', scope, message: `正在安装${scopeLabel}，请保持客户端打开。` })
-    installer({ modelId: activeModel.id, scope })
-      .then((response) => {
-        if (response.success) {
-          setProfessionalInstall({
-            status: 'success',
-            scope,
-            message: response.message || `${scopeLabel}安装完成，正在重新检测环境。`,
-            stdout: response.stdout,
-            stderr: response.stderr,
-            missingAfterInstall: response.missingAfterInstall,
-          })
-          setEnvironmentCheckNonce((current) => current + 1)
-          return
-        }
-        setProfessionalInstall({
-          status: 'error',
-          scope,
-          message: response.message || `${scopeLabel}安装失败。`,
-          stdout: response.stdout,
-          stderr: response.stderr,
-          missingAfterInstall: response.missingAfterInstall,
-        })
-      })
-      .catch((error) => {
-        setProfessionalInstall({
-          status: 'error',
-          scope,
-          message: error instanceof Error ? error.message : `${scopeLabel}安装失败。`,
-        })
-      })
+    setRunFailureDialog(null)
+    setWorkflowStep('variables')
   }
 
   const handleRunModel = () => {
-    if (!hasDataset || isModelRunning) return
+    if (!hasDataset || !hasActiveModel || isModelRunning) return
     if (validationErrors.length > 0) {
+      setWorkflowStep('variables')
+      setIsVariableSetupOpen(true)
       setRunState({
         result: null,
-        error: '参数未通过运行前检查，请先修正参数面板中的错误。',
+        error: `请先选择变量后再运行：${validationErrors[0]?.message ?? '变量设定未完成。'}`,
         logs: validationErrors.map((issue) => ({ level: 'warning' as const, message: issue.message })),
         signature: currentRunSignature,
       })
@@ -1820,11 +1828,13 @@ function App() {
     }
 
     setUploadError('')
+    setRunFailureDialog(null)
     runWorkerRef.current?.terminate()
     runCancelRef.current = false
     const taskId = `${Date.now()}-${activeModel.id}`
     const estimatedMs = estimateRunDuration(activeModel.id, rows.length)
     setIsModelRunning(true)
+    setWorkflowStep('run')
     setRunStatus('创建运行任务。')
     setRunTask({
       id: taskId,
@@ -1859,6 +1869,8 @@ function App() {
       setIsModelRunning(false)
       setRunStatus('')
       runWorkerRef.current = null
+      setRunFailureDialog(null)
+      setWorkflowStep('results')
     }
 
     const failRun = (message: string) => {
@@ -1875,6 +1887,7 @@ function App() {
               ...current,
               status: 'failed',
               phase: message,
+              progress: current.progress,
               elapsedMs: Date.now() - current.startedAt,
             }
           : current,
@@ -1882,6 +1895,12 @@ function App() {
       setIsModelRunning(false)
       setRunStatus('')
       runWorkerRef.current = null
+      setRunFailureDialog({
+        message,
+        modelName: activeModel.name,
+        formula: activeModel.getFormula(sanitizedConfig),
+      })
+      setWorkflowStep('variables')
     }
 
     const startBrowserWorker = (prefixLogs: RunLogEntry[] = []) => {
@@ -1927,38 +1946,24 @@ function App() {
       })
     }
 
-    const professionalRunner = window.visualStatsDesktop?.runProfessionalModel
-    const shouldTryProfessionalBackend = Boolean(professionalRunner) && (professionalBackendModelIds.has(activeModel.id) || activeModel.id.startsWith('spatial-'))
-
-    if (professionalRunner && shouldTryProfessionalBackend) {
-      updateRunTask('estimating', '调用本地 Python 专业后端。', 32)
-      professionalRunner({
-        taskId,
-        modelId: activeModel.id,
-        rows,
-        config: sanitizedConfig,
-        inference: activeModel.supportsInference ? effectiveInference : undefined,
-      })
-        .then((response) => {
-          if (runCancelRef.current) return
-          if (response.error || !response.result) {
-            throw new Error(response.error || '专业后端没有返回模型结果。')
-          }
-          completeRun(response.result, [
-            { level: 'info', message: `已使用 ${response.backend ?? 'Python'} 专业后端。` },
-            ...(response.logs ?? []),
-          ])
-        })
-        .catch((error) => {
-          if (runCancelRef.current) return
-          const reason = error instanceof Error ? error.message : '专业后端不可用。'
-          updateRunTask('estimating', '专业后端不可用，切换浏览器内置估计。', 42)
-          startBrowserWorker([{ level: 'warning', message: `专业后端不可用，已自动降级为浏览器估计：${reason}` }])
-        })
-      return
-    }
-
     startBrowserWorker()
+  }
+
+  const openVariableSetup = () => {
+    if (!hasDataset || !hasActiveModel || isModelRunning) return
+    setWorkflowStep('variables')
+    setIsVariableSetupOpen(true)
+  }
+
+  const saveVariableSetup = () => {
+    setWorkflowStep('variables')
+    setIsVariableSetupOpen(false)
+  }
+
+  const saveVariableSetupAndRun = () => {
+    if (validationErrors.length > 0) return
+    setIsVariableSetupOpen(false)
+    handleRunModel()
   }
 
   const persistSnapshots = (nextSnapshots: WorkbenchSnapshot[]) => {
@@ -1971,7 +1976,7 @@ function App() {
   }
 
   const saveSnapshot = () => {
-    if (!hasDataset) return
+    if (!hasDataset || !hasActiveModel) return
 
     const createdAt = new Date().toISOString()
     const snapshot: WorkbenchSnapshot = {
@@ -2010,6 +2015,7 @@ function App() {
     setPrepConfig(snapshot.prepConfig)
     setInferenceConfig(snapshot.inferenceConfig ?? { standardError: 'ols', clusterField: '' })
     setActiveModelId(snapshot.modelId)
+    setDraftModelId(snapshot.modelId)
     setModelConfig(snapshot.modelConfig)
     if (snapshot.result) {
       const snapshotProfiles = profileRows(snapshot.rows, snapshot.typeOverrides)
@@ -2068,7 +2074,23 @@ function App() {
   }
 
   const toggleAllSnapshots = () => {
-    setSelectedSnapshotIds((current) => (current.length === sortedSnapshots.length ? [] : sortedSnapshots.map((snapshot) => snapshot.id)))
+    setSelectedSnapshotIds((current) => {
+      const visibleIdSet = new Set(visibleSnapshotIds)
+      const allVisibleSelected = visibleSnapshotIds.length > 0 && visibleSnapshotIds.every((id) => current.includes(id))
+      if (allVisibleSelected) return current.filter((id) => !visibleIdSet.has(id))
+
+      return [...new Set([...current, ...visibleSnapshotIds])]
+    })
+  }
+
+  const setSelectedSnapshotFlag = (flag: 'favorite' | 'pinned', value: boolean) => {
+    if (selectedSnapshotIds.length === 0) return
+
+    persistSnapshots(
+      snapshots.map((snapshot) =>
+        selectedSnapshotIdSet.has(snapshot.id) ? { ...snapshot, [flag]: value, updatedAt: new Date().toISOString() } : snapshot,
+      ),
+    )
   }
 
   const deleteSelectedSnapshots = () => {
@@ -2094,6 +2116,12 @@ function App() {
 
   const handleUpload = async (file: File | undefined) => {
     if (!file) return
+    if (!hasActiveModel) {
+      setUploadError('')
+      setWorkflowStep('model')
+      return
+    }
+
     const extension = file.name.split('.').pop()?.toLowerCase()
 
     if (extension === 'xlsx') {
@@ -2126,14 +2154,33 @@ function App() {
     }))
   }
 
-  const setParamColumn = (paramId: string, value: string) => {
-    setModelConfig((current) => ({
-      ...current,
-      params: {
-        ...current.params,
-        [paramId]: value,
-      },
-    }))
+  const setSchemaParamColumn = (field: ParameterField, value: string) => {
+    setModelConfig((current) => {
+      const nextParams = { ...(current.params ?? {}), [field.id]: value }
+
+      if (field.role === 'target') {
+        activeModel.parameterSchema?.forEach((schemaField) => {
+          if (schemaField.kind === 'columns' && Array.isArray(nextParams[schemaField.id])) {
+            nextParams[schemaField.id] = (nextParams[schemaField.id] as string[]).filter((entry) => entry !== value)
+          }
+          if (schemaField.kind === 'column' && schemaField.id !== field.id && nextParams[schemaField.id] === value) {
+            nextParams[schemaField.id] = ''
+          }
+        })
+
+        return {
+          ...current,
+          target: field.id === 'target' ? value : current.target,
+          features: current.features.filter((entry) => entry !== value),
+          params: nextParams,
+        }
+      }
+
+      return {
+        ...current,
+        params: nextParams,
+      }
+    })
   }
 
   const setParamNumber = (paramId: string, value: number) => {
@@ -2175,13 +2222,23 @@ function App() {
       const nextValues = currentValues.includes(value)
         ? currentValues.filter((entry) => entry !== value)
         : [...currentValues, value].slice(maxSelections ? -maxSelections : 0)
+      const nextParams = {
+        ...current.params,
+        [paramId]: nextValues,
+      }
+
+      if (!currentValues.includes(value)) {
+        if (paramId === 'features') {
+          nextParams.controls = asParamArray(nextParams.controls).filter((entry) => entry !== value)
+        }
+        if (paramId === 'controls') {
+          nextParams.features = asParamArray(nextParams.features).filter((entry) => entry !== value)
+        }
+      }
 
       return {
         ...current,
-        params: {
-          ...current.params,
-          [paramId]: nextValues,
-        },
+        params: nextParams,
       }
     })
   }
@@ -2226,8 +2283,8 @@ function App() {
     ]
   }
 
-  const buildPublicationRegressionTable = () => {
-    if (!result) return null
+  function buildPublicationRegressionTable() {
+    if (!result || !hasActiveModel) return null
     return buildBaselinePublicationTable({
       result,
       config: sanitizedConfig,
@@ -2243,6 +2300,8 @@ function App() {
   }
 
   function buildCustomPublicationTableFromConfig() {
+    if (isCustomPublicationDefaultTableMode) return buildPublicationRegressionTable()
+
     const sources: CustomPublicationSource[] = selectedPublicationSources.map((source, index) => {
         const draft = customPublicationConfig.columns[source.id]
         return {
@@ -2272,70 +2331,86 @@ function App() {
     })
   }
 
+  const customPublicationAsCustom = (current: CustomPublicationConfig): CustomPublicationConfig => ({
+    ...current,
+    mode: 'custom',
+    selectedSourceIds: current.selectedSourceIds.length > 0 ? current.selectedSourceIds : defaultCustomPublicationSourceIds,
+  })
+
+  const startCustomPublicationEditing = () => {
+    setCustomPublicationConfig((current) => customPublicationAsCustom(current))
+  }
+
   const updateCustomPublicationConfig = (patch: Partial<Pick<CustomPublicationConfig, 'title' | 'note'>>) => {
-    setCustomPublicationConfig((current) => ({ ...current, ...patch }))
+    setCustomPublicationConfig((current) => ({ ...customPublicationAsCustom(current), ...patch }))
   }
 
   const updateCustomPublicationFormatRules = (patch: Partial<CustomPublicationFormatRules>) => {
     setCustomPublicationConfig((current) => {
+      const customCurrent = customPublicationAsCustom(current)
       const nextFormatRules = {
-        ...current.formatRules,
+        ...customCurrent.formatRules,
         ...patch,
-        starLevels: patch.starLevels ? patch.starLevels : current.formatRules.starLevels,
+        starLevels: patch.starLevels ? patch.starLevels : customCurrent.formatRules.starLevels,
       }
-      const currentAutoNote = buildCustomPublicationNote(current.formatRules)
+      const currentAutoNote = buildCustomPublicationNote(customCurrent.formatRules)
       return {
-        ...current,
+        ...customCurrent,
         formatRules: nextFormatRules,
-        note: current.note.trim() === '' || current.note === currentAutoNote ? buildCustomPublicationNote(nextFormatRules) : current.note,
+        note: customCurrent.note.trim() === '' || customCurrent.note === currentAutoNote ? buildCustomPublicationNote(nextFormatRules) : customCurrent.note,
       }
     })
   }
 
   const toggleCustomPublicationSource = (sourceId: string) => {
     setCustomPublicationConfig((current) => {
-      const baseSelected = current.selectedSourceIds.length > 0 ? current.selectedSourceIds : publicationSources.slice(0, 6).map((source) => source.id)
+      const customCurrent = customPublicationAsCustom(current)
+      const baseSelected = customCurrent.selectedSourceIds.length > 0 ? customCurrent.selectedSourceIds : effectiveCustomPublicationSourceIds
       const selected = baseSelected.includes(sourceId)
         ? baseSelected.filter((id) => id !== sourceId)
         : [...baseSelected, sourceId]
-      return { ...current, selectedSourceIds: selected }
+      return { ...customCurrent, selectedSourceIds: selected }
     })
   }
 
   const updateCustomPublicationColumn = (sourceId: string, patch: Partial<Omit<CustomPublicationColumnDraft, 'id'>>) => {
-    setCustomPublicationConfig((current) => ({
-      ...current,
+    setCustomPublicationConfig((current) => {
+      const customCurrent = customPublicationAsCustom(current)
+      return {
+      ...customCurrent,
       columns: {
-        ...current.columns,
+        ...customCurrent.columns,
         [sourceId]: {
           id: sourceId,
-          label: current.columns[sourceId]?.label ?? `(${Object.keys(current.columns).length + 1})`,
-          group: current.columns[sourceId]?.group ?? '',
-          modelLabel: current.columns[sourceId]?.modelLabel ?? '',
+          label: customCurrent.columns[sourceId]?.label ?? `(${Object.keys(customCurrent.columns).length + 1})`,
+          group: customCurrent.columns[sourceId]?.group ?? '',
+          modelLabel: customCurrent.columns[sourceId]?.modelLabel ?? '',
           ...patch,
         },
       },
-    }))
+    }
+    })
   }
 
   const moveCustomPublicationColumn = (sourceId: string, direction: 'up' | 'down') => {
     setCustomPublicationConfig((current) => {
+      const customCurrent = customPublicationAsCustom(current)
       const availableIds = selectedPublicationSources.map((source) => source.id)
       const orderedIds = [
-        ...current.columnOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !current.columnOrder.includes(id)),
+        ...customCurrent.columnOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !customCurrent.columnOrder.includes(id)),
       ]
       const index = orderedIds.indexOf(sourceId)
-      if (index === -1) return current
+      if (index === -1) return customCurrent
       const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
-      return { ...current, columnOrder: moveOrderedItem(orderedIds, sourceId, nextIndex) }
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
+      return { ...customCurrent, columnOrder: moveOrderedItem(orderedIds, sourceId, nextIndex) }
     })
   }
 
   const updateCustomPublicationVariableLabel = (variableId: string, label: string) => {
     setCustomPublicationConfig((current) => ({
-      ...current,
+      ...customPublicationAsCustom(current),
       variableLabels: {
         ...current.variableLabels,
         [variableId]: label,
@@ -2345,46 +2420,49 @@ function App() {
 
   const toggleCustomPublicationVariable = (variableId: string) => {
     setCustomPublicationConfig((current) => {
-      const hidden = current.hiddenVariableIds.includes(variableId)
-        ? current.hiddenVariableIds.filter((id) => id !== variableId)
-        : [...current.hiddenVariableIds, variableId]
-      return { ...current, hiddenVariableIds: hidden }
+      const customCurrent = customPublicationAsCustom(current)
+      const hidden = customCurrent.hiddenVariableIds.includes(variableId)
+        ? customCurrent.hiddenVariableIds.filter((id) => id !== variableId)
+        : [...customCurrent.hiddenVariableIds, variableId]
+      return { ...customCurrent, hiddenVariableIds: hidden }
     })
   }
 
   const moveCustomPublicationVariable = (variableId: string, direction: 'up' | 'down') => {
     setCustomPublicationConfig((current) => {
+      const customCurrent = customPublicationAsCustom(current)
       const availableIds = customPublicationVariableOptions.map((option) => option.id)
       const orderedIds = [
-        ...current.variableOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !current.variableOrder.includes(id)),
+        ...customCurrent.variableOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !customCurrent.variableOrder.includes(id)),
       ]
       const index = orderedIds.indexOf(variableId)
-      if (index === -1) return current
+      if (index === -1) return customCurrent
       const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
-      return { ...current, variableOrder: moveOrderedItem(orderedIds, variableId, nextIndex) }
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
+      return { ...customCurrent, variableOrder: moveOrderedItem(orderedIds, variableId, nextIndex) }
     })
   }
 
   const moveCustomPublicationStatistic = (statisticId: string, direction: 'up' | 'down') => {
     setCustomPublicationConfig((current) => {
+      const customCurrent = customPublicationAsCustom(current)
       const availableIds = customPublicationStatisticOptions.map((option) => option.id)
       const orderedIds = [
-        ...current.statisticOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !current.statisticOrder.includes(id)),
+        ...customCurrent.statisticOrder.filter((id) => availableIds.includes(id)),
+        ...availableIds.filter((id) => !customCurrent.statisticOrder.includes(id)),
       ]
       const index = orderedIds.indexOf(statisticId)
-      if (index === -1) return current
+      if (index === -1) return customCurrent
       const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return current
-      return { ...current, statisticOrder: moveOrderedItem(orderedIds, statisticId, nextIndex) }
+      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
+      return { ...customCurrent, statisticOrder: moveOrderedItem(orderedIds, statisticId, nextIndex) }
     })
   }
 
   const updateCustomPublicationStatisticLabel = (statisticId: string, label: string) => {
     setCustomPublicationConfig((current) => ({
-      ...current,
+      ...customPublicationAsCustom(current),
       statisticLabels: {
         ...current.statisticLabels,
         [statisticId]: label,
@@ -2394,16 +2472,17 @@ function App() {
 
   const toggleCustomPublicationStatistic = (statisticId: string) => {
     setCustomPublicationConfig((current) => {
-      const disabled = current.disabledStatisticIds.includes(statisticId)
-        ? current.disabledStatisticIds.filter((id) => id !== statisticId)
-        : [...current.disabledStatisticIds, statisticId]
-      return { ...current, disabledStatisticIds: disabled }
+      const customCurrent = customPublicationAsCustom(current)
+      const disabled = customCurrent.disabledStatisticIds.includes(statisticId)
+        ? customCurrent.disabledStatisticIds.filter((id) => id !== statisticId)
+        : [...customCurrent.disabledStatisticIds, statisticId]
+      return { ...customCurrent, disabledStatisticIds: disabled }
     })
   }
 
   const resetCustomPublicationOrdering = () => {
     setCustomPublicationConfig((current) => ({
-      ...current,
+      ...customPublicationAsCustom(current),
       columnOrder: [],
       variableOrder: [],
       statisticOrder: [],
@@ -2412,47 +2491,16 @@ function App() {
 
   const setAllCustomPublicationVariables = (visible: boolean) => {
     setCustomPublicationConfig((current) => ({
-      ...current,
+      ...customPublicationAsCustom(current),
       hiddenVariableIds: visible ? [] : orderedCustomPublicationVariableOptions.map((option) => option.id),
     }))
   }
 
   const setAllCustomPublicationStatistics = (enabled: boolean) => {
     setCustomPublicationConfig((current) => ({
-      ...current,
+      ...customPublicationAsCustom(current),
       disabledStatisticIds: enabled ? [] : customPublicationStatisticOptions.map((option) => option.id),
     }))
-  }
-
-  const applyCustomPublicationPreset = (preset: CustomPublicationPresetId) => {
-    setCustomPublicationConfig((current) => {
-      const next = structuredClone(current)
-      next.note = buildCustomPublicationNote(next.formatRules)
-      if (preset === 'baseline') {
-        next.title = '表 1：基准回归结果'
-        next.disabledStatisticIds = []
-        next.statisticOrder = Array.from(
-          new Set(['controls', ...customPublicationStatisticOptions.filter((option) => option.id.startsWith('fe:')).map((option) => option.id), 'n', 'adj-r2']),
-        )
-        next.formatRules.booleanDisplay = 'yes-no'
-        next.formatRules.parenthesisMode = 't'
-      } else if (preset === 'heterogeneity') {
-        next.title = '表：异质性分析'
-        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
-        next.formatRules.booleanDisplay = 'yes-blank'
-      } else if (preset === 'robustness') {
-        next.title = '表：稳健性检验结果'
-        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
-        next.formatRules.coefficientDigits = 4
-        next.formatRules.statisticDigits = 2
-      } else if (preset === 'endogeneity') {
-        next.title = '表：内生性检验'
-        next.disabledStatisticIds = next.disabledStatisticIds.filter((id) => id !== 'controls')
-        next.formatRules.parenthesisMode = 't'
-      }
-      next.note = buildCustomPublicationNote(next.formatRules)
-      return next
-    })
   }
 
   const saveCustomPublicationTemplate = () => {
@@ -2461,41 +2509,30 @@ function App() {
       id: crypto.randomUUID(),
       name,
       updatedAt: new Date().toISOString(),
-      config: structuredClone(customPublicationConfig),
+      config: structuredClone({ ...customPublicationAsCustom(customPublicationConfig), mode: 'custom' }),
     }
     setCustomPublicationTemplates((current) => [template, ...current.filter((entry) => entry.name !== name)])
   }
 
   const restoreCustomPublicationDefaults = () => {
-    setCustomPublicationConfig((current) => ({
-      ...defaultCustomPublicationConfig(),
-      selectedSourceIds: current.selectedSourceIds,
-      columns: current.columns,
-      columnOrder: current.columnOrder,
-    }))
-  }
-
-  const ensureCustomPublicationDraftReady = () => {
-    if (customPublicationDefaultTemplateId && isDefaultCustomPublicationConfig(customPublicationConfig)) {
-      applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
-    }
+    setCustomPublicationConfig(defaultCustomPublicationConfig())
   }
 
   const openPublicationWorkbench = () => {
-    if (!result) return
-    ensureCustomPublicationDraftReady()
+    setExportError('')
     setIsExportModalOpen(false)
-    setWorkspaceModeOverride('publication')
+    setWorkspaceTab('publication')
   }
 
   const closePublicationWorkbench = () => {
-    setWorkspaceModeOverride(null)
+    setExportError('')
+    setWorkspaceTab('workbench')
   }
 
   const applyCustomPublicationTemplate = (templateId: string) => {
     const template = customPublicationTemplates.find((entry) => entry.id === templateId)
     if (!template) return
-    setCustomPublicationConfig(normalizeCustomPublicationConfig(structuredClone(template.config)))
+    setCustomPublicationConfig(customPublicationAsCustom({ ...normalizeCustomPublicationConfig(structuredClone(template.config)), mode: 'custom' }))
   }
 
   const applyDefaultCustomPublicationTemplate = () => {
@@ -2531,32 +2568,35 @@ function App() {
     if (!draggingPublicationItem || draggingPublicationItem.kind !== kind || draggingPublicationItem.id === targetId) return
     if (kind === 'column') {
       setCustomPublicationConfig((current) => {
+        const customCurrent = customPublicationAsCustom(current)
         const availableIds = selectedPublicationSources.map((source) => source.id)
         const orderedIds = [
-          ...current.columnOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !current.columnOrder.includes(id)),
+          ...customCurrent.columnOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !customCurrent.columnOrder.includes(id)),
         ]
-        return { ...current, columnOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+        return { ...customCurrent, columnOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
       })
     }
     if (kind === 'variable') {
       setCustomPublicationConfig((current) => {
+        const customCurrent = customPublicationAsCustom(current)
         const availableIds = orderedCustomPublicationVariableOptions.map((option) => option.id)
         const orderedIds = [
-          ...current.variableOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !current.variableOrder.includes(id)),
+          ...customCurrent.variableOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !customCurrent.variableOrder.includes(id)),
         ]
-        return { ...current, variableOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+        return { ...customCurrent, variableOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
       })
     }
     if (kind === 'statistic') {
       setCustomPublicationConfig((current) => {
+        const customCurrent = customPublicationAsCustom(current)
         const availableIds = customPublicationStatisticOptions.map((option) => option.id)
         const orderedIds = [
-          ...current.statisticOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !current.statisticOrder.includes(id)),
+          ...customCurrent.statisticOrder.filter((id) => availableIds.includes(id)),
+          ...availableIds.filter((id) => !customCurrent.statisticOrder.includes(id)),
         ]
-        return { ...current, statisticOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
+        return { ...customCurrent, statisticOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
       })
     }
     setDraggingPublicationItem(null)
@@ -2577,6 +2617,22 @@ function App() {
     return `<h2>Stata 风格回归表</h2><table><thead><tr><th>Variable</th><th>Coef.</th><th>Std. err.</th><th>P>|t|</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
   }
 
+  const publicationTableCss = `
+.publication-block{margin:18px 0 24px}
+.publication-table{width:100%;border-collapse:collapse;table-layout:auto;margin:0;font-family:"Times New Roman","Noto Serif SC",serif;color:#000;background:#fff}
+.three-line th,.three-line td{border:0;padding:2px 6px;font-size:12px;line-height:1.28;text-align:center;vertical-align:middle;background:#fff}
+.three-line .row-label{text-align:left;white-space:nowrap}
+.three-line .is-empty-label{color:transparent}
+.three-line tr.row-role-title th{border-top:2px solid #000;border-bottom:2px solid #000;font-size:16px;font-weight:700;line-height:1.2;text-align:center;padding:3px 6px}
+.three-line tr.row-role-model th,.three-line tr.row-role-group th{font-weight:400}
+.three-line tr.is-last-header th{border-bottom:1.5px solid #000}
+.three-line tr.row-role-coefficient td:first-child{font-weight:600}
+.three-line tr.row-role-statistic td{padding-top:0;color:#000}
+.three-line tr:last-child td,.three-line tr:last-child th{border-bottom:2px solid #000}
+.three-line .is-centered{text-align:center}
+.note{margin-top:4px;padding-top:0;border-top:0;font-size:12px;line-height:1.35;color:#000;font-family:"Times New Roman","Noto Serif SC",serif}
+`
+
   function buildPublicationTableHtml(table: PublicationTable) {
     const mergeMap = new Map(table.merges.map((merge) => [`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan]))
     const hiddenCells = new Set<string>()
@@ -2586,15 +2642,18 @@ function App() {
     const rows = table.rows
       .map((row, rowIndex) => {
         const values = [row.label, ...row.values]
+        const nextRole = table.rows[rowIndex + 1]?.role
+        const isHeaderEnd = (row.role === 'header' || row.role === 'columnIndex') && nextRole !== 'header' && nextRole !== 'columnIndex'
+        const rowClassNames = [`row-role-${row.role}`, isHeaderEnd ? 'is-last-header' : ''].filter(Boolean).join(' ')
         const cells = values
           .map((cell, cellIndex) => {
             if (hiddenCells.has(`${rowIndex}:${cellIndex}`)) return ''
-            const tag = row.role === 'title' || row.role === 'model' || row.role === 'header' ? 'th' : 'td'
+            const tag = row.role === 'title' || row.role === 'model' || row.role === 'group' || row.role === 'header' || row.role === 'columnIndex' ? 'th' : 'td'
             const classNames = [
               cellIndex === 0 ? 'row-label' : '',
               `row-role-${row.role}`,
               row.role === 'statistic' && cellIndex === 0 ? 'is-empty-label' : '',
-              cellIndex > 0 && row.role !== 'coefficient' && row.role !== 'statistic' ? 'is-centered' : '',
+              cellIndex > 0 ? 'is-centered' : '',
             ]
               .filter(Boolean)
               .join(' ')
@@ -2602,7 +2661,7 @@ function App() {
             return `<${tag}${classNames ? ` class="${classNames}"` : ''}${span ? ` colspan="${span}"` : ''}>${escapeXml(cell)}</${tag}>`
           })
           .join('')
-        return `<tr class="row-role-${row.role}">${cells}</tr>`
+        return `<tr class="${rowClassNames}">${cells}</tr>`
       })
       .join('')
 
@@ -2617,7 +2676,7 @@ function App() {
   }
 
   const buildHtmlReport = (selectedIds = getExportSelection()) => {
-    if (!result) return ''
+    if (!result || !hasActiveModel) return ''
     const tableHtml = getSelectedResultTables(selectedIds)
       .map(
         (table) =>
@@ -2645,12 +2704,64 @@ function App() {
         : ''
 
     return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(activeModel.name)} 报告</title><style>
-body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28px;line-height:1.65}h1{font-size:22px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;margin:8px 0 14px}th,td{border:1px solid #d9ddd6;padding:6px 8px;font-size:12px;text-align:left}th{background:#f4f6f2}.publication-block{margin:20px 0 28px}.publication-table{margin:0}.three-line th,.three-line td{border-left:0;border-right:0;text-align:center;padding:4px 8px}.three-line .row-label{text-align:left}.three-line .is-empty-label{color:transparent}.three-line tr.row-role-title th{border-top:2px solid #1a1f26;border-bottom:0;font-size:16px;font-weight:700;background:#fff;padding:0 0 6px}.three-line tr.row-role-model th{border-top:0;border-bottom:0;background:#fff;font-weight:400;padding-top:1px;padding-bottom:1px}.three-line tr.row-role-header th{border-top:0;border-bottom:1px solid #1a1f26;background:#fff;font-weight:400}.three-line tr.row-role-coefficient td:first-child{font-weight:600}.three-line tr.row-role-statistic td{padding-top:0;color:#4b5563;font-size:11px}.three-line tr.row-role-metric td,.three-line tr.row-role-fixedEffect td{background:#fafaf7}.three-line tr:last-child td{border-bottom:2px solid #1a1f26}.three-line .is-centered{text-align:center}.note{margin-top:8px;padding-top:6px;border-top:1px solid rgba(26,31,38,0.12);font-size:12px;color:#66706b}code{white-space:pre-wrap}
+body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28px;line-height:1.65}h1{font-size:22px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;margin:8px 0 14px}th,td{border:1px solid #d9ddd6;padding:6px 8px;font-size:12px;text-align:left}th{background:#f4f6f2}code{white-space:pre-wrap}${publicationTableCss}
 </style></head><body><h1>${escapeXml(activeModel.name)}（${escapeXml(activeModel.shortName)}）</h1><p><strong>公式：</strong><code>${escapeXml(activeModel.getFormula(sanitizedConfig))}</code></p><p><strong>可信度：</strong>${escapeXml(modelMaturity.label)} · ${escapeXml(modelMaturity.description)}</p>${summaryRows}${buildStataStyleTable(selectedIds)}${buildThreeLineTable(selectedIds)}${customPublicationHtml}${tableHtml}${logRows}${configBlock}</body></html>`
   }
 
+  const excelCell = (
+    value: string | number,
+    style: Partial<Extract<Cell, { value?: unknown }>> = {},
+  ): Cell => ({
+    value,
+    type: typeof value === 'number' ? Number : String,
+    align: typeof value === 'number' ? 'right' : 'left',
+    ...style,
+  })
+
+  const publicationSheetData = (table: PublicationTable): SheetData => {
+    const rows = publicationTableToRows(table, { includeNotes: true })
+    const hiddenCells = new Set<string>()
+    const mergeStarts = new Map<string, number>()
+
+    table.merges.forEach((merge) => {
+      mergeStarts.set(`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan)
+      for (let offset = 1; offset < merge.columnSpan; offset += 1) hiddenCells.add(`${merge.rowIndex}:${merge.columnIndex + offset}`)
+    })
+
+    return rows.map((row, rowIndex) =>
+      row.map((cell, columnIndex) => {
+        if (hiddenCells.has(`${rowIndex}:${columnIndex}`)) return null
+        const role = rowIndex < table.rows.length ? table.rows[rowIndex].role : 'note'
+        const nextRole = table.rows[rowIndex + 1]?.role
+        const isHeader = role === 'title' || role === 'model' || role === 'group' || role === 'header' || role === 'columnIndex'
+        const isStatistic = role === 'statistic'
+        const isNote = role === 'note'
+        const isTitleRow = role === 'title'
+        const isHeaderEnd = (role === 'header' || role === 'columnIndex') && nextRole !== 'header' && nextRole !== 'columnIndex'
+        const isLastTableRow = rowIndex === table.rows.length - 1
+        const isCoefficientLabel = role === 'coefficient' && columnIndex === 0
+        return excelCell(cell, {
+          fontFamily: 'Times New Roman',
+          fontSize: isTitleRow ? 14 : isNote ? 11 : 12,
+          fontWeight: isTitleRow || isHeader || isCoefficientLabel ? 'bold' : undefined,
+          align: isTitleRow || role === 'model' || role === 'group' || columnIndex > 0 ? 'center' : 'left',
+          wrap: true,
+          columnSpan: mergeStarts.get(`${rowIndex}:${columnIndex}`),
+          backgroundColor: '#ffffff',
+          topBorderStyle: isTitleRow ? 'medium' : undefined,
+          bottomBorderStyle: isTitleRow || isLastTableRow ? 'medium' : isHeaderEnd ? 'thin' : undefined,
+          leftBorderStyle: undefined,
+          rightBorderStyle: undefined,
+          textColor: '#000000',
+          alignVertical: 'center',
+          height: isTitleRow ? 22 : role === 'model' || role === 'group' || isHeaderEnd ? 17 : isNote ? 18 : isStatistic ? 15 : 18,
+        })
+      }),
+    )
+  }
+
   const buildExcelBlob = async (selectedIds = getExportSelection()) => {
-    if (!result) return new Blob([])
+    if (!result || !hasActiveModel) return new Blob([])
     const worksheetNames = new Set<string>()
     const worksheetName = (name: string) => {
       const base = name.replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31) || 'Sheet'
@@ -2664,15 +2775,6 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
       worksheetNames.add(nextName)
       return nextName
     }
-    const excelCell = (
-      value: string | number,
-      style: Partial<Extract<Cell, { value?: unknown }>> = {},
-    ): Cell => ({
-      value,
-      type: typeof value === 'number' ? Number : String,
-      align: typeof value === 'number' ? 'right' : 'left',
-      ...style,
-    })
     const asSheetData = (rows: Array<Array<string | number>>): SheetData =>
       rows.map((row, rowIndex) =>
         row.map((cell, columnIndex) => {
@@ -2686,49 +2788,6 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
           })
         }),
       )
-    const publicationSheetData = (table: PublicationTable): SheetData => {
-      const rows = publicationTableToRows(table, { includeNotes: true })
-      const hiddenCells = new Set<string>()
-      const mergeStarts = new Map<string, number>()
-
-      table.merges.forEach((merge) => {
-        mergeStarts.set(`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan)
-        for (let offset = 1; offset < merge.columnSpan; offset += 1) hiddenCells.add(`${merge.rowIndex}:${merge.columnIndex + offset}`)
-      })
-
-      return rows.map((row, rowIndex) =>
-        row.map((cell, columnIndex) => {
-          if (hiddenCells.has(`${rowIndex}:${columnIndex}`)) return null
-          const role = rowIndex < table.rows.length ? table.rows[rowIndex].role : 'note'
-          const isHeader = role === 'title' || role === 'model' || role === 'header'
-          const isStatistic = role === 'statistic'
-          const isMetric = role === 'metric' || role === 'fixedEffect'
-          const isNote = role === 'note'
-          const isLastTableRow = rowIndex === table.rows.length - 1
-          const isTitleRow = role === 'title'
-          const isHeaderRow = role === 'header'
-          const isModelRow = role === 'model'
-          const isCoefficientLabel = role === 'coefficient' && columnIndex === 0
-          return excelCell(cell, {
-            fontFamily: 'Times New Roman',
-            fontSize: isTitleRow ? 12 : isNote ? 10 : 11,
-            fontWeight: isHeader || isCoefficientLabel ? 'bold' : undefined,
-            align: isTitleRow || isModelRow || columnIndex > 0 ? 'center' : 'left',
-            wrap: true,
-            columnSpan: mergeStarts.get(`${rowIndex}:${columnIndex}`),
-            backgroundColor: isHeader ? '#ffffff' : isMetric ? '#fafaf7' : undefined,
-            topBorderStyle: isTitleRow ? 'medium' : isHeaderRow ? 'thin' : undefined,
-            bottomBorderStyle: isLastTableRow ? 'medium' : isHeaderRow ? 'thin' : isNote ? undefined : 'thin',
-            leftBorderStyle: undefined,
-            rightBorderStyle: undefined,
-            textColor: isStatistic || isNote ? '#66706b' : '#1a1f26',
-            fontStyle: isNote ? 'italic' : undefined,
-            alignVertical: 'center',
-            height: isTitleRow ? 24 : isModelRow ? 16 : isNote ? 18 : isStatistic ? 15 : 18,
-          })
-        }),
-      )
-    }
     const tableRows = (table: ModelResult['tables'][number]) => [
       table.columns.map((column) => columnLabels[column] ?? column),
       ...table.rows.map((row) => table.columns.map((column) => formatResultValue(row[column] ?? '', column))),
@@ -2779,7 +2838,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
   }
 
   const buildCsvReport = (selectedIds = getExportSelection()) => {
-    if (!result) return ''
+    if (!result || !hasActiveModel) return ''
     const lines: string[] = []
     if (selectedIds.includes('summary')) {
       lines.push('模型摘要', csvLine(['字段', '值']), csvLine(['Model', activeModel.getFormula(sanitizedConfig)]))
@@ -2817,7 +2876,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
   }
 
   const exportReport = async (format: ExportFormat = exportFormat, selectedIds = getExportSelection()) => {
-    if (!result) return
+    if (!result || !hasActiveModel) return
     if (selectedIds.length === 0) return
     if (format === 'excel') {
       downloadBlob([await buildExcelBlob(selectedIds)], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${activeModel.id}-report.xlsx`)
@@ -2873,9 +2932,6 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
     setExportError('')
     setSelectedExportItemIds((current) => {
       const next = current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]
-      if (id === 'custom-publication' && !current.includes(id) && customPublicationDefaultTemplateId && isDefaultCustomPublicationConfig(customPublicationConfig)) {
-        applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
-      }
       return next
     })
   }
@@ -2917,6 +2973,66 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
       setIsExportModalOpen(false)
     } catch (error) {
       setExportError(error instanceof Error ? error.message : '导出失败，请调整导出内容后重试。')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
+  const exportCustomPublicationOnly = async (format: ExportFormat = 'excel') => {
+    if (isExporting) return
+    const publicationTable = buildCustomPublicationTableFromConfig()
+    if (!publicationTable) {
+      setExportError('自定义论文表至少需要选择一个包含回归结果的来源。')
+      return
+    }
+
+    try {
+      setIsExporting(true)
+      setExportError('')
+      const filenameBase = (customPublicationConfig.title.trim() || '自定义论文表').replace(/[\\/:*?"<>|]/g, '-')
+      const rowsForExport = publicationTableToRows(publicationTable, { includeNotes: true })
+
+      if (format === 'excel') {
+        const columnCount = publicationTable.columns.length + 1
+        const labelWidth = Math.min(26, Math.max(16, Math.max(...publicationTable.rows.map((row) => row.label.length), 8) * 1.35))
+        const valueWidth = Math.min(
+          18,
+          Math.max(
+            11,
+            ...publicationTable.rows.flatMap((row) => row.values.map((value) => String(value ?? '').length * 1.08)),
+          ),
+        )
+        const blob = await writeXlsxFile(
+          [
+            {
+              sheet: publicationTable.sheetName,
+              data: publicationSheetData(publicationTable),
+              columns: Array.from({ length: columnCount }, (_, columnIndex) => ({ width: columnIndex === 0 ? labelWidth : valueWidth })),
+              showGridLines: false,
+            },
+          ],
+          { fontFamily: 'Times New Roman', fontSize: 11 },
+        ).toBlob()
+        downloadBlob([blob], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${filenameBase}.xlsx`)
+        return
+      }
+
+      if (format === 'html' || format === 'word') {
+        const html = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:"Times New Roman","Noto Serif SC",serif;color:#000;margin:28px;line-height:1.45}${publicationTableCss}</style></head><body>${buildPublicationTableHtml(publicationTable)}</body></html>`
+        downloadBlob([format === 'word' ? '\uFEFF' : '', html], format === 'word' ? 'application/msword;charset=utf-8' : 'text/html;charset=utf-8', `${filenameBase}.${format === 'word' ? 'doc' : 'html'}`)
+        return
+      }
+
+      if (format === 'json') {
+        downloadBlob([JSON.stringify(publicationTable, null, 2)], 'application/json;charset=utf-8', `${filenameBase}.json`)
+        return
+      }
+
+      const note = String(rowsForExport.at(-1)?.[0] ?? '')
+      const csv = [...rowsForExport.slice(0, -1).map((row) => csvLine(row)), '', note].join('\n')
+      downloadBlob(['\uFEFF', csv], 'text/csv;charset=utf-8', `${filenameBase}.csv`)
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '自定义论文表导出失败。')
     } finally {
       setIsExporting(false)
     }
@@ -2978,7 +3094,15 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
         : field.columnTypes
           ? field.columnTypes.flatMap((type) => schemaColumnsByType[type] ?? []).filter((column) => eligibleFeatureColumns.includes(column))
           : eligibleFeatureColumns
-    const uniqueOptions = Array.from(new Set(options)).filter((column) => field.role === 'target' || column !== selectedTarget)
+    const coreFeatureValues = asParamArray(sanitizedConfig.params?.features)
+    const controlValues = asParamArray(sanitizedConfig.params?.controls)
+    const uniqueOptions = Array.from(new Set(options)).filter((column) => {
+      if (field.role === 'target') return true
+      if (column === selectedTarget) return false
+      if (field.id === 'controls') return !coreFeatureValues.includes(column)
+      if (field.kind === 'columns') return !controlValues.includes(column)
+      return true
+    })
 
     if (field.kind === 'column') {
       return (
@@ -2987,7 +3111,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
           <select
             value={asParamString(sanitizedConfig.params?.[field.id])}
             disabled={isModelRunning}
-            onChange={(event) => setParamColumn(field.id, event.target.value)}
+            onChange={(event) => setSchemaParamColumn(field, event.target.value)}
           >
             <option value="">请选择字段</option>
             {uniqueOptions.map((column) => (
@@ -3028,11 +3152,525 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
     )
   }
 
+  const renderPrimaryModelControls = () => (
+    <>
+      {activeModel.parameterSchema ? (
+        <div className="parameter-schema variable-step-schema">
+          {(() => {
+            const fieldSection = primaryParameterSections.find((section) => section.id === 'fields')
+            const targetFields = fieldSection?.fields.filter((field) => field.role === 'target') ?? []
+            const coreFields = fieldSection?.fields.filter((field) => field.role !== 'target' && field.id !== 'controls') ?? []
+            const controlFields = fieldSection?.fields.filter((field) => field.id === 'controls') ?? []
+            const otherSections = primaryParameterSections.filter((section) => section.id !== 'fields')
+
+            return (
+              <>
+                {targetFields.length > 0 ? (
+                  <section className="parameter-section variable-step-section">
+                    <div className="parameter-section__header">
+                      <strong>Step 1 · 选择被解释变量</strong>
+                      <span>先确定因变量 Y；切换后会自动移除同名解释变量。</span>
+                    </div>
+                    {targetFields.map(renderParameterField)}
+                  </section>
+                ) : null}
+
+                {coreFields.length > 0 ? (
+                  <section className="parameter-section variable-step-section">
+                    <div className="parameter-section__header">
+                      <strong>Step 2 · 选择核心解释变量</strong>
+                      <span>核心解释变量会进入主公式；已选控制变量不会在这里重复出现。</span>
+                    </div>
+                    {coreFields.map(renderParameterField)}
+                  </section>
+                ) : null}
+
+                {controlFields.length > 0 ? (
+                  <section className="parameter-section variable-step-section">
+                    <div className="parameter-section__header">
+                      <strong>Step 3 · 选择控制变量</strong>
+                      <span>控制变量与核心解释变量互斥，但运行时仍会纳入回归。</span>
+                    </div>
+                    {controlFields.map(renderParameterField)}
+                  </section>
+                ) : null}
+
+                {otherSections.map((section) => (
+                  <section className="parameter-section" key={section.id}>
+                    <div className="parameter-section__header">
+                      <strong>{section.title}</strong>
+                      <span>{section.description}</span>
+                    </div>
+                    {section.fields.map(renderParameterField)}
+                  </section>
+                ))}
+              </>
+            )
+          })()}
+        </div>
+      ) : activeModel.requiresTarget ? (
+        <section className="parameter-section">
+          <div className="parameter-section__header">
+            <strong>模型字段</strong>
+            <span>选择因变量和解释变量。</span>
+          </div>
+          <label className="control-group">
+            <span>{activeModel.targetLabel}</span>
+            <select
+              value={selectedTarget}
+              disabled={isModelRunning}
+              onChange={(event) => setModelConfig((current) => ({ ...current, target: event.target.value }))}
+            >
+              <option value="">请选择字段</option>
+              {numericColumns.map((column) => (
+                <option key={column} value={column}>
+                  {column}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+      ) : null}
+
+      {!activeModel.parameterSchema ? (
+        <section className={`parameter-section ${activeModel.requiresTarget ? 'is-continuation' : ''}`}>
+          {!activeModel.requiresTarget ? (
+            <div className="parameter-section__header">
+              <strong>模型字段</strong>
+              <span>选择当前方法需要分析的数据列。</span>
+            </div>
+          ) : null}
+          <div className="control-group">
+            <span>{activeModel.featuresLabel}</span>
+            <div className="feature-picker">
+              {selectableFeatureColumns.length === 0 ? (
+                <div className="empty-history">当前插件没有可用字段，请在数据表中调整字段类型或维度角色。</div>
+              ) : (
+                selectableFeatureColumns.map((column) => {
+                  const profile = profiles.find((entry) => entry.name === column)
+
+                  return (
+                    <label key={column}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFeatures.includes(column)}
+                        disabled={isModelRunning}
+                        onChange={() => toggleFeature(column)}
+                      />
+                      <span>
+                        {column}
+                        {profile?.type === 'category' ? <em>{activeModel.supportsCategoricalFeatures ? 'encoded' : 'category'}</em> : null}
+                        {profile?.type === 'text' ? <em>text</em> : null}
+                      </span>
+                    </label>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </>
+  )
+
+  const renderModelRunSettings = () => (
+    <>
+      {activeModel.parameterSchema && advancedSchemaSections.length > 0 ? (
+        <div className="parameter-schema">
+          {advancedSchemaSections.map((section) => (
+            <section className="parameter-section" key={section.id}>
+              <div className="parameter-section__header">
+                <strong>{section.title}</strong>
+                <span>{section.description}</span>
+              </div>
+              {section.fields.map(renderParameterField)}
+            </section>
+          ))}
+        </div>
+      ) : null}
+
+      {activeModel.supportsInference ? (
+        <section className="parameter-section">
+          <div className="parameter-section__header">
+            <strong>推断设置</strong>
+            <span>设置标准误类型和聚类字段。</span>
+          </div>
+          <div className="inference-controls">
+            <label className="control-group">
+              <span>标准误</span>
+              <select
+                value={inferenceConfig.standardError}
+                disabled={isModelRunning}
+                onChange={(event) =>
+                  setInferenceConfig((current) => ({
+                    ...current,
+                    standardError: event.target.value as InferenceConfig['standardError'],
+                  }))
+                }
+              >
+                <option value="ols">普通标准误</option>
+                <option value="robust">Robust 稳健标准误</option>
+                <option value="cluster">Cluster 聚类稳健标准误</option>
+              </select>
+            </label>
+
+            {inferenceConfig.standardError === 'cluster' ? (
+              <label className="control-group">
+                <span>Cluster 字段</span>
+                <select
+                  value={effectiveInference.clusterField}
+                  disabled={isModelRunning}
+                  onChange={(event) =>
+                    setInferenceConfig((current) => ({
+                      ...current,
+                      clusterField: event.target.value,
+                    }))
+                  }
+                >
+                  {clusterColumns.map((column) => (
+                    <option key={column} value={column}>
+                      {column}
+                    </option>
+                  ))}
+                </select>
+                <small className="model-description">优先使用导入向导中的 ID/Time/Group 字段。</small>
+              </label>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      <div className="settings-list">
+        {activeModel.getSettings(sanitizedConfig).map((setting) => (
+          <div key={setting.label}>
+            <span>{setting.label}</span>
+            <strong>{setting.value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="formula-box">
+        <span>Formula</span>
+        <code>{activeModel.getFormula(sanitizedConfig)}</code>
+      </div>
+    </>
+  )
+
+  const renderValidationPanel = () =>
+    validationIssues.length > 0 ? (
+      <div className="parameter-validation">
+        <strong>运行前检查</strong>
+        {validationIssues.map((issue) => (
+          <p className={issue.level === 'error' ? 'is-error' : 'is-warning'} key={issue.message}>
+            <AlertTriangle size={13} />
+            {issue.message}
+          </p>
+        ))}
+      </div>
+    ) : (
+      <div className="parameter-validation is-ok">
+        <strong>运行前检查</strong>
+        <p>
+          <CheckCircle size={13} />
+          当前参数可以运行。
+        </p>
+      </div>
+    )
+
+  const workflowItems: Array<{ id: WorkflowStep; label: string }> = [
+    { id: 'model', label: '选模型' },
+    { id: 'upload', label: '上传数据' },
+    { id: 'roles', label: 'ID / 分组' },
+    { id: 'variables', label: '变量设定' },
+    { id: 'run', label: '运行' },
+    { id: 'results', label: '结果' },
+  ]
+
+  const renderWorkflowGuidance = () => (
+    <section className={`guided-workflow is-${effectiveWorkflowStep}`}>
+      <div className="guided-workflow__rail" aria-label="建模流程">
+        {workflowItems.map((item, index) => (
+          <button
+            key={item.id}
+            className={item.id === effectiveWorkflowStep ? 'is-active' : ''}
+            type="button"
+            onClick={() => {
+              if (item.id !== 'model' && !hasActiveModel) return
+              if (item.id === 'results' && !result) return
+              if ((item.id === 'roles' || item.id === 'variables' || item.id === 'run') && !hasDataset) return
+              if (item.id === 'run' && (!isModelRunning || validationErrors.length > 0)) return
+              if (item.id === 'variables') {
+                openVariableSetup()
+                return
+              }
+              setWorkflowStep(item.id)
+            }}
+            disabled={(item.id !== 'model' && !hasActiveModel) || (item.id === 'results' && !result) || ((item.id === 'roles' || item.id === 'variables' || item.id === 'run') && !hasDataset) || (item.id === 'run' && !isModelRunning)}
+          >
+            <span>{index + 1}</span>
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {effectiveWorkflowStep === 'model' ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 1</span>
+            <h3>{hasActiveModel ? '模型已选择' : '请选择一个模型开始分析'}</h3>
+            <p>{hasActiveModel ? `已选择 ${activeModel.name}。如需更换，请先在模型库中点选模型，再点击“使用此模型”完成应用。` : '打开模型库，点选一个模型后点击“使用此模型”，主页会显示当前已选模型。'}</p>
+          </div>
+          <div className="guided-workflow__actions">
+            <button className="secondary-button" type="button" onClick={openModelLibrary} disabled={isModelRunning}>
+              <Search size={14} />
+              打开模型库
+            </button>
+            <button className="primary-button" type="button" onClick={() => setWorkflowStep('upload')} disabled={!hasActiveModel || isModelRunning}>
+              确认模型，继续上传
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {effectiveWorkflowStep === 'upload' ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 2</span>
+            <h3>上传 CSV 或 XLSX 数据</h3>
+            <p>{hasDataset ? `已导入 ${fileName || '当前数据'}，共 ${rows.length} 行。可以重新上传，或继续设置 ID 字段。` : '导入数据后，系统会打开字段角色确认面板。'}</p>
+          </div>
+          <div className="guided-workflow__actions">
+            <label className="primary-button import-cta">
+              <Upload size={15} />
+              {hasDataset ? '重新上传' : '选择文件'}
+              <input
+                type="file"
+                accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                disabled={!canImportData}
+                onChange={(event) => {
+                  handleUpload(event.target.files?.[0])
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+            {hasDataset ? (
+              <button className="secondary-button" type="button" onClick={() => setWorkflowStep('roles')}>
+                继续设置 ID / 分组
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {effectiveWorkflowStep === 'roles' ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 3</span>
+            <h3>确认 ID、时间和分组字段</h3>
+            <p>{hasRoleSetting ? roleSummary : '如果数据没有 ID、时间或分组字段，可以直接继续变量设定。'}</p>
+          </div>
+          <div className="guided-role-grid">
+            {profiles.map((profile) => (
+              <label key={profile.name} className="guided-role-row">
+                <span>
+                  <strong>{profile.name}</strong>
+                  <small>{profile.type} · {profile.missing} miss · {profile.unique} unique</small>
+                </span>
+                <select className="role-select" value={fieldRoleValue(dataRoles, profile.name)} onChange={(event) => setDataFieldRole(profile.name, event.target.value)} disabled={isModelRunning}>
+                  <option value="">模型变量</option>
+                  <option value="id">ID</option>
+                  <option value="time">Time</option>
+                  <option value="group">Group</option>
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="guided-workflow__actions">
+            <button className="primary-button" type="button" onClick={openVariableSetup} disabled={!hasActiveModel || !hasDataset || isModelRunning}>
+              打开变量设定
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {effectiveWorkflowStep === 'variables' ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 4</span>
+            <h3>设置因变量、自变量和控制变量</h3>
+            <p>{modelContextLead}</p>
+          </div>
+          <div className="variable-summary-card">
+            <div>
+              <span>{activeModel.targetLabel}</span>
+              <strong>{selectedTarget || '未设置'}</strong>
+            </div>
+            <div>
+              <span>{activeModel.featuresLabel}</span>
+              <strong>{selectedFeatureSummary}</strong>
+            </div>
+            <div>
+              <span>运行前检查</span>
+              <strong>{validationErrors.length > 0 ? validationErrors[0].message : '当前参数可以运行'}</strong>
+            </div>
+          </div>
+          <div className="guided-workflow__actions">
+            <button className="primary-button" type="button" onClick={openVariableSetup} disabled={!hasActiveModel || !hasDataset || isModelRunning}>
+              设置变量与参数
+            </button>
+            <button className="secondary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+              <Play size={14} />
+              {validationErrors.length > 0 ? '需调整后运行' : '运行模型'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {effectiveWorkflowStep === 'run' && isModelRunning ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 5</span>
+            <h3>模型正在运行</h3>
+            <p>{runTask?.phase || '参数已锁定，完成后自动进入结果阅读。'}</p>
+          </div>
+          {runTask ? (
+            <div className="run-task-progress" aria-label="模型运行进度">
+              <div>
+                <span>{runTask.progress}%</span>
+                <span>
+                  {formatDuration(runTask.elapsedMs)} / {formatDuration(runTask.estimatedMs)}
+                </span>
+              </div>
+              <progress value={runTask.progress} max={100} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {effectiveWorkflowStep === 'results' ? (
+        <div className="guided-workflow__body">
+          <div>
+            <span className="panel__label">Step 6</span>
+            <h3>按结果阅读顺序检查输出</h3>
+            <p>中间区域从上往下是系数估计、核心结论和稳定性检验。需要修改参数时，回到变量设定后重新运行。</p>
+          </div>
+          <div className="guided-workflow__actions">
+            <button className="secondary-button" type="button" onClick={openVariableSetup} disabled={isModelRunning}>
+              返回变量设定
+            </button>
+            <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
+              <Download size={14} />
+              导出结果
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+
+  const renderVariableSetupModal = () => (
+    <div className="modal-backdrop" role="presentation">
+      <section className="import-wizard variable-setup-modal" role="dialog" aria-modal="true" aria-label="变量设定向导">
+        <div className="data-modal__header">
+          <div>
+            <span className="panel__label">Variable setup</span>
+            <h2>设置变量与参数</h2>
+            <p>{activeModel.name} · {activeFormula}</p>
+          </div>
+          <button className="ghost-button" type="button" onClick={saveVariableSetup} title="关闭">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="modal-summary-strip">
+          <div>
+            <span>模型</span>
+            <strong>{activeModel.name}</strong>
+          </div>
+          <div>
+            <span>样本</span>
+            <strong>{hasDataset ? `${rows.length} 行 · ${profiles.length} 字段` : '尚未导入数据'}</strong>
+          </div>
+          <div>
+            <span>检查</span>
+            <strong>{validationErrors.length > 0 ? validationErrors[0].message : '当前参数可以运行'}</strong>
+          </div>
+        </div>
+
+        <div className="variable-setup__body">
+          <section className="variable-setup-pane">
+            <div className="section-title">
+              <Table size={17} />
+              <h2>字段设定</h2>
+            </div>
+            <p>选择因变量、核心自变量和控制变量。维度字段不会进入候选列表。</p>
+            {renderPrimaryModelControls()}
+          </section>
+
+          <section className="variable-setup-pane">
+            <div className="section-title">
+              <SlidersHorizontal size={17} />
+              <h2>参数与推断</h2>
+            </div>
+            <p>设置标准误、聚类字段和模型特有的高级参数。</p>
+            {renderModelRunSettings()}
+          </section>
+
+          <section className="variable-setup-pane">
+            <div className="section-title">
+              <CheckCircle size={17} />
+              <h2>运行前检查</h2>
+            </div>
+            <p>保存前确认字段、样本和参数是否满足当前模型要求。</p>
+            {renderValidationPanel()}
+            <div className="variable-summary-card">
+              <div>
+                <span>{activeModel.targetLabel}</span>
+                <strong>{selectedTarget || '未设置'}</strong>
+              </div>
+              <div>
+                <span>{activeModel.featuresLabel}</span>
+                <strong>{selectedFeatureSummary}</strong>
+              </div>
+              <div>
+                <span>维度字段</span>
+                <strong>{roleSummary || '未设置'}</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="import-wizard__footer">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              setWorkflowStep('roles')
+              setIsVariableSetupOpen(false)
+            }}
+          >
+            返回 ID / 分组
+          </button>
+          <button className="secondary-button is-subtle" type="button" onClick={saveVariableSetup}>
+            保存设定
+          </button>
+          <button className="primary-button" type="button" onClick={saveVariableSetupAndRun} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+            <Play size={14} />
+            保存并运行
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+
   const visiblePublicationVariableCount = orderedCustomPublicationVariableOptions.filter((option) => !hiddenCustomPublicationVariableSet.has(option.id)).length
   const enabledPublicationStatisticCount = customPublicationStatisticOptions.filter((option) => !disabledCustomPublicationStatisticSet.has(option.id)).length
+  const customPublicationDisplayTitle = customPublicationPreviewTable?.title ?? customPublicationConfig.title
   const publicationTemplateStatus = matchedCustomPublicationTemplate
     ? `当前使用模板：${matchedCustomPublicationTemplate.name}`
-    : customPublicationDefaultTemplateId
+    : isCustomPublicationDefaultTableMode
+      ? '默认同款：当前结果论文三线表'
+      : customPublicationDefaultTemplateId
       ? '当前为草稿状态，可随时应用默认模板'
       : '当前为未命名草稿'
 
@@ -3042,16 +3680,16 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
         <section className="publication-workbench__hero">
           <div>
             <span className="panel__label">Paper Table Workspace</span>
-            <h2>{customPublicationConfig.title}</h2>
+            <h2>{customPublicationDisplayTitle}</h2>
             <p>把来源列、变量行、统计行和注释整理成一张适合 Excel、Word 和 HTML 导出的论文表。</p>
           </div>
           <div className="publication-workbench__hero-actions">
             <button className="secondary-button is-subtle" type="button" onClick={closePublicationWorkbench}>
-              返回结果区
+              返回建模
             </button>
-            <button className="secondary-button" type="button" onClick={openExportDialog} disabled={!result}>
+            <button className="primary-button" type="button" onClick={() => exportCustomPublicationOnly('excel')} disabled={!canExportCustomPublication}>
               <Download size={14} />
-              打开导出
+              {isExporting ? '导出中' : '导出自定义表'}
             </button>
           </div>
         </section>
@@ -3060,18 +3698,31 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
           <span>{selectedPublicationSources.length} 个来源列</span>
           <span>{visiblePublicationVariableCount} 个显示变量</span>
           <span>{enabledPublicationStatisticCount} 个统计行</span>
+          {isCustomPublicationDefaultTableMode ? <span>与直接论文三线表一致</span> : null}
           <span>{publicationTemplateStatus}</span>
         </div>
 
+        {isCustomPublicationDefaultTableMode ? (
+          <div className="custom-publication-mode-notice">
+            <div>
+              <strong>当前使用“当前结果论文三线表”模式</strong>
+              <span>预览和导出会复用直接导出的论文三线表。添加历史来源、修改列头或调整格式后，将进入自定义多列表模式。</span>
+            </div>
+            <button className="secondary-button" type="button" onClick={startCustomPublicationEditing} disabled={isExporting}>
+              开始自定义多列表
+            </button>
+          </div>
+        ) : null}
+
+        {exportError && workspaceTab === 'publication' ? (
+          <div className="export-error" role="alert">
+            <AlertTriangle size={15} />
+            {exportError}
+          </div>
+        ) : null}
+
         <div className="custom-publication-panel custom-publication-panel--workspace">
           <div className="custom-publication-toolbar">
-            <div className="custom-publication-toolbar__group">
-              {customPublicationPresetMeta.map((preset) => (
-                <button className="secondary-button" type="button" key={preset.id} onClick={() => applyCustomPublicationPreset(preset.id)} disabled={isExporting} title={preset.detail}>
-                  {preset.label}
-                </button>
-              ))}
-            </div>
             <div className="custom-publication-toolbar__group">
               <button className="secondary-button" type="button" onClick={resetCustomPublicationOrdering} disabled={isExporting}>
                 恢复默认顺序
@@ -3160,6 +3811,11 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
               <div className="custom-publication-editor__header">
                 <strong>显示规则</strong>
                 <span>控制数字位数、括号统计、星号阈值以及缺失/布尔展示方式。</span>
+              </div>
+              <div className="custom-publication-style-card">
+                <span>表格样式</span>
+                <strong>论文三线表 / Stata 风格</strong>
+                <small>预览、Excel、Word 和 HTML 使用同一套黑白三线表规则；不输出编辑器里的绿色提示角或换行标记。</small>
               </div>
               <div className="custom-publication-format-grid">
                 <label><span>系数小数位</span><input type="number" min="0" max="8" value={customPublicationConfig.formatRules.coefficientDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ coefficientDigits: Number(event.target.value) })} /></label>
@@ -3265,26 +3921,11 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             </section>
           </div>
 
-          <div className="custom-publication-preview-grid">
+          <div className="custom-publication-preview-grid custom-publication-preview-grid--single">
             <section className="custom-publication-editor">
               <div className="custom-publication-editor__header">
-                <strong>内置预设</strong>
-                <span>先套一个常见论文结构，再按变量、统计行和列头精调，会更省力。</span>
-              </div>
-              <div className="custom-publication-preset-list">
-                {customPublicationPresetMeta.map((preset) => (
-                  <div className="custom-publication-preset" key={preset.id}>
-                    <div><strong>{preset.label}</strong><small>{preset.detail}</small></div>
-                    <button className="secondary-button" type="button" onClick={() => applyCustomPublicationPreset(preset.id)} disabled={isExporting}>套用</button>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>模板</strong>
-                <span>保存、套用、复制、删除，并设置默认模板。</span>
+                <strong>用户模板</strong>
+                <span>保存你自己的论文表格式，后续可套用、复制、删除，并设置为默认模板。</span>
               </div>
               <div className="custom-publication-template-list">
                 {customPublicationTemplates.length === 0 ? (
@@ -3315,10 +3956,10 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             <div>
               <span className="panel__label">Live preview</span>
               <h2>论文表预览</h2>
-              <p>右侧预览会实时反映列顺序、变量显示、统计行与注释内容。</p>
+              <p>预览会实时反映列顺序、变量显示、统计行与注释内容。</p>
             </div>
-            <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
-              导出
+            <button className="secondary-button is-subtle" type="button" onClick={() => exportCustomPublicationOnly('excel')} disabled={!canExportCustomPublication}>
+              导出 Excel
             </button>
           </div>
           {customPublicationPreviewTable ? (
@@ -3345,7 +3986,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
         </button>
       </div>
       <div className="custom-publication-summary-card__grid">
-        <div><span>当前表名</span><strong>{customPublicationConfig.title}</strong></div>
+        <div><span>当前表名</span><strong>{customPublicationDisplayTitle}</strong></div>
         <div><span>来源列</span><strong>{selectedPublicationSources.length} 个</strong></div>
         <div><span>变量行</span><strong>{visiblePublicationVariableCount} 个显示</strong></div>
         <div><span>统计行</span><strong>{enabledPublicationStatisticCount} 个启用</strong></div>
@@ -3360,90 +4001,180 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="topbar__brand">
-          <span className="eyebrow">Visual Stats Lab</span>
-          <h1>统计建模工作台</h1>
+        <div className="topbar__left">
+          <div className="topbar__brand">
+            <span className="eyebrow">Visual Stats Lab</span>
+            <h1>{workspaceTab === 'publication' ? '自定义导出表' : '统计建模工作台'}</h1>
+          </div>
+          <nav className="workspace-tabs" aria-label="工作区切换">
+            <button
+              className={workspaceTab === 'workbench' ? 'is-active' : ''}
+              type="button"
+              onClick={() => setWorkspaceTab('workbench')}
+            >
+              建模工作台
+            </button>
+            <button
+              className={workspaceTab === 'publication' ? 'is-active' : ''}
+              type="button"
+              onClick={openPublicationWorkbench}
+            >
+              自定义导出表
+            </button>
+          </nav>
         </div>
         <div className="topbar__actions">
-          <label className="icon-button" title="导入 CSV / XLSX">
-            <Upload size={16} />
-            <input
-              type="file"
-              accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              onChange={(event) => {
-                handleUpload(event.target.files?.[0])
-                event.currentTarget.value = ''
-              }}
-            />
-          </label>
-          <button className="secondary-button is-subtle" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
-            <Table size={15} />
-            数据表
-          </button>
-          <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasDataset || isModelRunning || validationErrors.length > 0}>
-            <Play size={15} />
-            {isModelRunning ? '运行中' : '运行模型'}
-          </button>
+          {workspaceTab === 'publication' ? (
+            <>
+              <button className="secondary-button is-subtle" type="button" onClick={closePublicationWorkbench}>
+                返回建模
+              </button>
+              <button className="primary-button" type="button" onClick={() => exportCustomPublicationOnly('excel')} disabled={!canExportCustomPublication}>
+                <Download size={15} />
+                {isExporting ? '导出中' : '导出自定义表'}
+              </button>
+            </>
+          ) : (
+            <>
+              <label
+                className={`icon-button ${canImportData ? '' : 'is-disabled'}`}
+                title={canImportData ? '导入 CSV / XLSX' : '请先选择模型'}
+                aria-disabled={!canImportData}
+                onClick={(event) => {
+                  if (canImportData) return
+                  event.preventDefault()
+                  setWorkflowStep('model')
+                }}
+              >
+                <Upload size={16} />
+                <input
+                  type="file"
+                  accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  disabled={!canImportData}
+                  onChange={(event) => {
+                    handleUpload(event.target.files?.[0])
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+              <button className="secondary-button is-subtle" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
+                <Table size={15} />
+                数据表
+              </button>
+              <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+                <Play size={15} />
+                {isModelRunning ? '运行中' : '运行模型'}
+              </button>
+            </>
+          )}
         </div>
       </header>
 
-      <section className={`workspace workspace--${workspaceMode} ${isHistoryCollapsed ? 'is-history-collapsed' : ''}`}>
-        <aside className={`panel data-panel ${isHistoryCollapsed ? 'is-collapsed' : ''}`}>
+      <section className={`workspace workspace--${workspaceMode}`}>
+        {workspaceMode !== 'publication' ? (
+        <aside className="panel data-panel">
           <div className="panel__header">
             <div>
               <span className="panel__label">Project</span>
               <h2>项目索引</h2>
             </div>
-            <button
-              className="snapshot-icon-button"
-              type="button"
-              title={isHistoryCollapsed ? '展开历史记录' : '折叠历史记录'}
-              onClick={() => setIsHistoryCollapsed((current) => !current)}
-            >
-              <History size={18} />
-            </button>
           </div>
 
           <div className="history-panel-content">
             <div className="dataset-card dataset-card--compact">
               <span className="dataset-card__label">当前项目</span>
-              <strong>{fileName || '尚未导入数据'}</strong>
-              <p>{hasDataset ? `${rows.length} 行 · ${profiles.length} 字段` : '导入 CSV 或 XLSX 后开始分析。'}</p>
-              {roleSummary ? <small className="dataset-card__meta">{roleSummary}</small> : null}
-              <div className="dataset-card__actions">
+              <strong className="dataset-card__title">{fileName || '尚未导入数据'}</strong>
+              <div className="project-summary-list">
+                <div>
+                  <span>数据规模</span>
+                  <strong>{hasDataset ? `${rows.length} 行 · ${profiles.length} 字段` : '未导入'}</strong>
+                </div>
+                <div>
+                  <span>当前模型</span>
+                  <strong>{activeModel.name}</strong>
+                </div>
+                <div>
+                  <span>维度字段</span>
+                  <strong>{roleSummary || '未设置'}</strong>
+                </div>
+                <div>
+                  <span>结果状态</span>
+                  <strong>{result ? '已有结果' : hasDataset ? '待运行' : '待导入'}</strong>
+                </div>
+              </div>
+              <div className="dataset-card__actions dataset-card__actions--compact">
                 <button className="secondary-button" type="button" onClick={() => setIsDataModalOpen(true)} disabled={!hasDataset}>
                   <Table size={14} />
-                  查看数据
+                  数据表
                 </button>
                 <button className="secondary-button is-subtle" type="button" onClick={saveSnapshot} disabled={!hasDataset}>
                   <Save size={14} />
-                  保存当前数据
+                  保存快照
                 </button>
               </div>
             </div>
 
             {snapshots.length > 0 ? (
               <div className="snapshot-toolbar snapshot-toolbar--compact">
-                <button
-                  className="secondary-button is-subtle is-full"
-                  type="button"
-                  onClick={() => {
-                    setIsSnapshotManageMode((current) => !current)
-                    setSelectedSnapshotIds([])
-                  }}
-                >
-                  {isSnapshotManageMode ? <Check size={14} /> : <SlidersHorizontal size={14} />}
-                  {isSnapshotManageMode ? '完成管理' : '管理历史'}
-                </button>
+                <div className="snapshot-toolbar__summary">
+                  <span>历史快照</span>
+                  <strong>{snapshotSummaryText}</strong>
+                </div>
+                <div className="snapshot-toolbar__actions">
+                  <div className="snapshot-filter-tabs" aria-label="历史快照筛选">
+                    {snapshotFilterOptions.map((option) => (
+                      <button
+                        className={snapshotViewFilter === option.id ? 'is-active' : ''}
+                        type="button"
+                        key={option.id}
+                        onClick={() => {
+                          setSnapshotViewFilter(option.id)
+                          setSelectedSnapshotIds([])
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    className="secondary-button is-subtle"
+                    type="button"
+                    onClick={() => {
+                      setIsSnapshotManageMode((current) => !current)
+                      setSelectedSnapshotIds([])
+                    }}
+                  >
+                    {isSnapshotManageMode ? <Check size={14} /> : <SlidersHorizontal size={14} />}
+                    {isSnapshotManageMode ? '完成' : '管理'}
+                  </button>
+                </div>
               </div>
             ) : null}
 
           {isSnapshotManageMode ? (
             <div className="snapshot-batchbar">
-              <button className="secondary-button" type="button" onClick={toggleAllSnapshots}>
-                {selectedSnapshotIds.length === sortedSnapshots.length ? '取消全选' : '全选'}
+              <button className="secondary-button" type="button" onClick={toggleAllSnapshots} disabled={visibleSnapshotIds.length === 0}>
+                {visibleSnapshotIds.length > 0 && visibleSnapshotIds.every((id) => selectedSnapshotIdSet.has(id)) ? '取消全选' : '全选'}
               </button>
               <span>{selectedSnapshotIds.length} 已选</span>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setSelectedSnapshotFlag('pinned', !selectedSnapshotsAllPinned)}
+                disabled={selectedSnapshotIds.length === 0}
+              >
+                <Pin size={14} />
+                {selectedSnapshotsAllPinned ? '取消置顶' : '置顶'}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setSelectedSnapshotFlag('favorite', !selectedSnapshotsAllFavorite)}
+                disabled={selectedSnapshotIds.length === 0}
+              >
+                <Star size={14} />
+                {selectedSnapshotsAllFavorite ? '取消收藏' : '收藏'}
+              </button>
               <button className="secondary-button is-danger" type="button" onClick={deleteSelectedSnapshots} disabled={selectedSnapshotIds.length === 0}>
                 <Trash2 size={14} />
                 删除
@@ -3451,14 +4182,19 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             </div>
           ) : null}
 
-          <div className="snapshot-list snapshot-list--compact">
+          <div className={`snapshot-list snapshot-list--compact ${isSnapshotManageMode ? 'is-managing' : ''}`}>
             {snapshots.length === 0 ? (
               <div className="empty-history">
                 <History size={17} />
                 保存一次当前数据后，这里会形成可回溯的项目索引。
               </div>
+            ) : visibleSnapshots.length === 0 ? (
+              <div className="empty-history">
+                <History size={17} />
+                当前筛选下没有快照。
+              </div>
             ) : (
-              sortedSnapshots.map((snapshot) => (
+              visibleSnapshots.map((snapshot) => (
                 <article
                   className={`snapshot-item ${snapshot.pinned ? 'is-pinned' : ''} ${snapshot.favorite ? 'is-favorite' : ''} ${
                     selectedSnapshotIdSet.has(snapshot.id) ? 'is-selected' : ''
@@ -3502,17 +4238,15 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                         <span>
                           <strong>{snapshot.label}</strong>
                           <small>{new Date(snapshot.createdAt).toLocaleString()}</small>
+                          {snapshot.pinned || snapshot.favorite ? (
+                            <span className="snapshot-badges">
+                              {snapshot.pinned ? <em>置顶</em> : null}
+                              {snapshot.favorite ? <em>收藏</em> : null}
+                            </span>
+                          ) : null}
                         </span>
                       </button>
                       <div className="snapshot-actions">
-                        <button
-                          className={`snapshot-icon-button ${snapshot.favorite ? 'is-active' : ''}`}
-                          type="button"
-                          title={snapshot.favorite ? '取消收藏' : '收藏'}
-                          onClick={() => toggleSnapshotFlag(snapshot.id, 'favorite')}
-                        >
-                          <Star size={14} />
-                        </button>
                         <button
                           className={`snapshot-icon-button ${snapshot.pinned ? 'is-active' : ''}`}
                           type="button"
@@ -3520,6 +4254,14 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                           onClick={() => toggleSnapshotFlag(snapshot.id, 'pinned')}
                         >
                           <Pin size={14} />
+                        </button>
+                        <button
+                          className={`snapshot-icon-button ${snapshot.favorite ? 'is-active' : ''}`}
+                          type="button"
+                          title={snapshot.favorite ? '取消收藏' : '收藏'}
+                          onClick={() => toggleSnapshotFlag(snapshot.id, 'favorite')}
+                        >
+                          <Star size={14} />
                         </button>
                         <button className="snapshot-icon-button" type="button" title="重命名" onClick={() => startRenameSnapshot(snapshot)}>
                           <Pencil size={14} />
@@ -3536,11 +4278,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                     onClick={() => (isSnapshotManageMode ? toggleSnapshotSelection(snapshot.id) : restoreSnapshot(snapshot))}
                   >
                     <em>{snapshot.formula}</em>
-                    <small>
-                      {snapshot.pinned ? '置顶 · ' : ''}
-                      {snapshot.favorite ? '收藏 · ' : ''}
-                      {snapshot.result ? '含结果' : '仅配置'} · {new Date(snapshot.createdAt).toLocaleDateString()}
-                    </small>
+                    <small>{snapshot.result ? '含结果' : '仅配置'} · {new Date(snapshot.createdAt).toLocaleDateString()}</small>
                   </button>
                 </article>
               ))
@@ -3548,69 +4286,76 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
           </div>
           </div>
         </aside>
+        ) : null}
 
         <section className="main-stage">
-          {!hasDataset ? (
-            <section className="empty-workbench">
-              <div className="empty-workbench__icon">
-                <Database size={24} />
-              </div>
-              <h2>开始分析</h2>
-              <p>导入 CSV 或 XLSX 文件，系统将自动识别字段类型并进入数据维度设置向导。</p>
-              <label className="primary-button import-cta">
-                <Upload size={15} />
-                选择文件
-                <input
-                  type="file"
-                  accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  onChange={(event) => {
-                    handleUpload(event.target.files?.[0])
-                    event.currentTarget.value = ''
-                  }}
-                />
-              </label>
-            </section>
+          {workspaceMode === 'publication' ? (
+            renderCustomPublicationWorkbench()
           ) : (
             <>
-              <section className="workbench-focus">
-                <div className="workbench-focus__copy">
-                  <span className="panel__label">Main workspace</span>
-                  <h2>{workspaceHeading}</h2>
-                  <p>{workspaceLead}</p>
-                </div>
-                <div className="workbench-focus__actions">
-                  {result ? (
-                    <button className="secondary-button is-subtle" type="button" onClick={openPublicationWorkbench} disabled={!result}>
-                      论文表
-                    </button>
-                  ) : null}
-                  {result ? (
-                    <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
-                      <Download size={14} />
-                      导出结果
-                    </button>
-                  ) : null}
-                  {isModelRunning ? (
-                    <button className="secondary-button is-subtle" type="button" onClick={cancelRunTask}>
-                      <X size={14} />
-                      取消
-                    </button>
-                  ) : null}
-                  <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasDataset || isModelRunning || validationErrors.length > 0}>
-                    <Play size={14} />
-                    {validationErrors.length > 0 ? '需调整后运行' : isModelRunning ? '运行中' : hasStaleResult ? '重新运行' : '运行模型'}
-                  </button>
-                </div>
-              </section>
+              {workspaceMode !== 'result' ? (
+                <>
+                  <section className="workbench-focus">
+                    <div className="workbench-focus__copy">
+                      <span className="panel__label">Main workspace</span>
+                      <h2>{workspaceHeading}</h2>
+                      <p>{workspaceLead}</p>
+                    </div>
+                    <div className="workbench-focus__actions">
+                      {result ? (
+                        <button className="secondary-button is-subtle" type="button" onClick={openPublicationWorkbench} disabled={!result}>
+                          论文表
+                        </button>
+                      ) : null}
+                      {result ? (
+                        <button className="secondary-button is-subtle" type="button" onClick={openExportDialog} disabled={!result}>
+                          <Download size={14} />
+                          导出结果
+                        </button>
+                      ) : null}
+                      {isModelRunning ? (
+                        <button className="secondary-button is-subtle" type="button" onClick={cancelRunTask}>
+                          <X size={14} />
+                          取消
+                        </button>
+                      ) : null}
+          <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+                        <Play size={14} />
+                        {validationErrors.length > 0 ? '需调整后运行' : isModelRunning ? '运行中' : hasStaleResult ? '重新运行' : '运行模型'}
+                      </button>
+                    </div>
+                  </section>
 
-              <section className="workbench-meta-strip" aria-label="当前工作区状态">
-                <span>{activeModel.name}</span>
-                <span>{rows.length} 个观测</span>
-                <span>{profiles.length} 个字段</span>
-                <span>{panelDiagnosis.title}</span>
-                <span>{modelMaturity.label}</span>
-              </section>
+                  <section className={`model-confirm-strip ${hasActiveModel ? 'is-selected' : 'is-empty'}`} aria-label="当前模型">
+                    <div>
+                      <span>当前模型</span>
+                      <strong>{hasActiveModel ? activeModel.name : '尚未选择模型'}</strong>
+                      <small>{hasActiveModel ? `${activeModel.shortName || activeModel.methodLabel} · ${getModelCategory(activeModel)}` : '请先在模型库中选择并应用模型'}</small>
+                    </div>
+                    {hasActiveModel ? <em>已选择</em> : null}
+                    <button
+                      className={hasActiveModel ? 'secondary-button is-subtle' : 'primary-button'}
+                      type="button"
+                      onClick={hasActiveModel ? () => setWorkflowStep(hasDataset ? 'variables' : 'upload') : openModelLibrary}
+                      disabled={isModelRunning}
+                    >
+                      {hasActiveModel ? (hasDataset ? '设置变量' : '继续上传') : '打开模型库'}
+                    </button>
+                  </section>
+                </>
+              ) : null}
 
+              {hasDataset && workspaceMode !== 'result' ? (
+                <section className="workbench-meta-strip" aria-label="当前工作区状态">
+                  <span>{activeModel.name}</span>
+                  <span>{rows.length} 个观测</span>
+                  <span>{profiles.length} 个字段</span>
+                  <span>{panelDiagnosis.title}</span>
+                  <span>{modelMaturity.label}</span>
+                </section>
+              ) : null}
+
+              {shouldShowFocusTask ? (
               <section className={`focus-task-card is-${workspaceMode} ${isModelRunning ? 'is-running' : ''} ${hasStaleResult ? 'is-stale' : ''}`}>
                 <div>
                   <strong>
@@ -3638,10 +4383,11 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                   </div>
                 ) : null}
               </section>
+              ) : null}
 
-              {workspaceMode === 'publication' && result ? (
-                renderCustomPublicationWorkbench()
-              ) : (
+              {workspaceMode !== 'result' ? renderWorkflowGuidance() : null}
+
+              {result || isModelRunning || uploadError ? (
               <section className="results-workspace">
                 <div className="result-panel result-primary-panel">
                   <div className="result-primary-header">
@@ -3661,185 +4407,73 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
 
                   <ResultReadingPanel
                     result={result}
-                    runLogs={runLogs}
                     isModelRunning={isModelRunning}
                     hasStaleResult={hasStaleResult}
+                    modelName={activeModel.name}
+                    formula={activeFormula}
                     leadInsight={leadInsight}
                     secondaryInsights={secondaryInsights}
                     visibleSummaryMetrics={visibleSummaryMetrics}
                     mainResultTable={mainResultTable}
                     secondaryResultTables={secondaryResultTables}
-                    primaryDiagnostic={primaryDiagnostic}
-                    correlationMatrix={correlationMatrix}
                     runTask={runTask}
-                    error={error}
+                    error={uploadError}
                   />
                 </div>
               </section>
-              )}
+              ) : null}
             </>
           )}
         </section>
 
+        {workspaceMode !== 'publication' ? (
         <aside className="panel config-panel">
           <div className="panel__header">
             <div>
-              <span className="panel__label">Context</span>
-              <h2>上下文面板</h2>
+              <span className="panel__label">Model</span>
+              <h2>模型与参数</h2>
             </div>
-            <button className="ghost-button" type="button" onClick={() => setIsModelLibraryOpen(true)} title="模型库" disabled={isModelRunning}>
+            <button className="ghost-button" type="button" onClick={openModelLibrary} title="模型库" disabled={isModelRunning}>
               <Search size={16} />
             </button>
           </div>
 
-          <div className="context-mode-card">
-            <span className="panel__label">当前模式</span>
-            <strong>{workspaceHeading}</strong>
-            <p>{nextAction}</p>
-          </div>
-
           <div className="active-model-card">
-            <div className="active-model-card__header">
-              <span>{getModelCategory(activeModel)}</span>
-              <button className="secondary-button is-subtle" type="button" onClick={() => setIsModelLibraryOpen(true)} disabled={isModelRunning}>
-                切换模型
-              </button>
-            </div>
-            <small className="model-description">{activeModel.description}</small>
-            <div className={`model-quality is-${modelMaturity.level}`}>
-              <strong>{modelMaturity.label}</strong>
-              <span>{modelMaturity.description}</span>
-            </div>
-            <div className="model-identity">
-              <span>{getModelCategory(activeModel)}</span>
-              <code>{activeFormula}</code>
-            </div>
+            {hasActiveModel ? (
+              <>
+                <div className="active-model-card__header">
+                  <span>{getModelCategory(activeModel)}</span>
+                  <em className="model-status-badge">已选择</em>
+                  <button className="secondary-button is-subtle" type="button" onClick={openModelLibrary} disabled={isModelRunning}>
+                    切换模型
+                  </button>
+                </div>
+                <small className="model-description">{activeModel.description}</small>
+                <div className={`model-quality is-${modelMaturity.level}`}>
+                  <strong>{modelMaturity.label}</strong>
+                  <span>{modelMaturity.description}</span>
+                </div>
+                <div className="model-identity">
+                  <span>{getModelCategory(activeModel)}</span>
+                  <code>{activeFormula}</code>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="active-model-card__header">
+                  <span>未选择</span>
+                  <button className="secondary-button is-subtle" type="button" onClick={openModelLibrary} disabled={isModelRunning}>
+                    打开模型库
+                  </button>
+                </div>
+                <small className="model-description">请选择一个模型后再上传数据、设置变量和运行分析。</small>
+                <div className="model-identity">
+                  <span>当前状态</span>
+                  <code>尚未选择模型</code>
+                </div>
+              </>
+            )}
           </div>
-
-          {workspaceMode === 'data' ? (
-            <section className="context-panel-card">
-              <div className="parameter-section__header">
-                <strong>数据上下文</strong>
-                <span>当前先聚焦数据导入、维度字段和字段角色。</span>
-              </div>
-              <div className="context-mini-list">
-                <div>
-                  <span>数据文件</span>
-                  <strong>{fileName || '尚未导入'}</strong>
-                </div>
-                <div>
-                  <span>维度字段</span>
-                  <strong>{roleSummary || '尚未设置 ID / Time / Group'}</strong>
-                </div>
-                <div>
-                  <span>数据概况</span>
-                  <strong>{rows.length} 行 · {profiles.length} 字段</strong>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {workspaceMode === 'model' ? (
-            <section className="context-panel-card">
-              <div className="parameter-section__header">
-                <strong>建模上下文</strong>
-                <span>右侧只保留本次运行最相关的配置信息。</span>
-              </div>
-              <div className="context-mini-list">
-                <div>
-                  <span>当前模型</span>
-                  <strong>{activeModel.name}</strong>
-                </div>
-                <div>
-                  <span>字段设定</span>
-                  <strong>{fieldReadinessSummary}</strong>
-                </div>
-                <div>
-                  <span>解释变量</span>
-                  <strong>{selectedFeatureSummary}</strong>
-                </div>
-              </div>
-              <p className="context-panel-card__footnote">{modelContextLead}</p>
-            </section>
-          ) : null}
-
-          {workspaceMode === 'result' && result ? (
-            <section className="context-panel-card">
-              <div className="parameter-section__header">
-                <strong>结果辅助</strong>
-                <span>用于解释、导出和回顾本次运行。</span>
-              </div>
-              <div className="summary-grid summary-grid--sidebar">
-                {visibleSummaryMetrics.map((metric) => (
-                  <span key={metric.label}>
-                    <strong>{formatMetricValue(metric)}</strong>
-                    {metric.label}
-                  </span>
-                ))}
-              </div>
-              <button className="secondary-button is-full" type="button" onClick={openPublicationWorkbench} disabled={!result}>
-                进入论文表工作台
-              </button>
-              <button className="secondary-button is-subtle is-full" type="button" onClick={openExportDialog} disabled={!result}>
-                <Download size={14} />
-                选择导出内容
-              </button>
-            </section>
-          ) : null}
-
-          {workspaceMode === 'publication' && result ? (
-            <section className="context-panel-card">
-              <div className="parameter-section__header">
-                <strong>论文表上下文</strong>
-                <span>这里聚焦当前草稿、来源列和模板状态。</span>
-              </div>
-              <div className="context-mini-list">
-                <div>
-                  <span>表名</span>
-                  <strong>{customPublicationConfig.title}</strong>
-                </div>
-                <div>
-                  <span>来源列</span>
-                  <strong>{selectedPublicationSources.length} 个</strong>
-                </div>
-                <div>
-                  <span>模板状态</span>
-                  <strong>{matchedCustomPublicationTemplate?.name ?? '草稿编辑中'}</strong>
-                </div>
-                <div>
-                  <span>统计行</span>
-                  <strong>{enabledPublicationStatisticCount} 个启用</strong>
-                </div>
-              </div>
-              <p className="context-panel-card__footnote">{publicationTemplateStatus}</p>
-              <button className="secondary-button is-full" type="button" onClick={closePublicationWorkbench}>
-                返回结果区
-              </button>
-              <button className="secondary-button is-subtle is-full" type="button" onClick={openExportDialog} disabled={!result}>
-                <Download size={14} />
-                选择导出内容
-              </button>
-            </section>
-          ) : null}
-
-          {workspaceMode === 'report' && result ? (
-            <section className="context-panel-card">
-              <div className="parameter-section__header">
-                <strong>报告上下文</strong>
-                <span>导出阶段优先确认结论、核心表格和附加信息。</span>
-              </div>
-              <div className="context-mini-list">
-                <div>
-                  <span>核心结论</span>
-                  <strong>{leadInsight || '结果已生成，可选择导出内容。'}</strong>
-                </div>
-                <div>
-                  <span>模型摘要</span>
-                  <strong>{visibleSummaryMetrics.map((metric) => `${metric.label} ${formatMetricValue(metric)}`).join(' · ')}</strong>
-                </div>
-              </div>
-            </section>
-          ) : null}
 
           {isModelRunning ? (
             <div className="parameter-lock-notice">
@@ -3848,352 +4482,35 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             </div>
           ) : null}
 
-          {workspaceMode !== 'publication' && activeModel.parameterSchema ? (
-            <div className="parameter-schema">
-              {primaryParameterSections.map((section) => (
-                <section className="parameter-section" key={section.id}>
-                  <div className="parameter-section__header">
-                    <strong>{section.title}</strong>
-                    <span>{section.description}</span>
-                  </div>
-                  {section.fields.map(renderParameterField)}
-                </section>
-              ))}
+          <section className="model-setup-card">
+            <div className="parameter-section__header">
+              <strong>变量与参数</strong>
+              <span>字段、控制变量和推断设置已集中到弹窗中。</span>
             </div>
-          ) : workspaceMode !== 'publication' && activeModel.requiresTarget ? (
-            <section className="parameter-section">
-              <div className="parameter-section__header">
-                <strong>模型字段</strong>
-                <span>选择因变量和解释变量。</span>
-              </div>
-              <label className="control-group">
+            <div className="variable-summary-card">
+              <div>
                 <span>{activeModel.targetLabel}</span>
-                <select
-                  value={selectedTarget}
-                  disabled={isModelRunning}
-                  onChange={(event) => setModelConfig((current) => ({ ...current, target: event.target.value }))}
-                >
-                  {numericColumns.map((column) => (
-                    <option key={column} value={column}>
-                      {column}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </section>
-          ) : null}
-
-          {!activeModel.parameterSchema ? (
-            <section className={`parameter-section ${activeModel.requiresTarget ? 'is-continuation' : ''}`}>
-              {!activeModel.requiresTarget ? (
-                <div className="parameter-section__header">
-                  <strong>模型字段</strong>
-                  <span>选择当前方法需要分析的数据列。</span>
-                </div>
-              ) : null}
-              <div className="control-group">
+                <strong>{selectedTarget || '未设置'}</strong>
+              </div>
+              <div>
                 <span>{activeModel.featuresLabel}</span>
-                <div className="feature-picker">
-                  {selectableFeatureColumns.length === 0 ? (
-                    <div className="empty-history">当前插件没有可用字段，请在数据表中调整字段类型或维度角色。</div>
-                  ) : (
-                    selectableFeatureColumns.map((column) => {
-                      const profile = profiles.find((entry) => entry.name === column)
-
-                      return (
-                        <label key={column}>
-                          <input
-                            type="checkbox"
-                            checked={selectedFeatures.includes(column)}
-                            disabled={isModelRunning}
-                            onChange={() => toggleFeature(column)}
-                          />
-                          <span>
-                            {column}
-                            {profile?.type === 'category' ? <em>{activeModel.supportsCategoricalFeatures ? 'encoded' : 'category'}</em> : null}
-                            {profile?.type === 'text' ? <em>text</em> : null}
-                          </span>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
+                <strong>{selectedFeatureSummary}</strong>
               </div>
-            </section>
-          ) : null}
-
-          <details className="context-disclosure">
-            <summary>高级参数与模型设定</summary>
-            <div className="context-disclosure__body">
-              {activeModel.parameterSchema && advancedSchemaSections.length > 0 ? (
-                <div className="parameter-schema">
-                  {advancedSchemaSections.map((section) => (
-                    <section className="parameter-section" key={section.id}>
-                      <div className="parameter-section__header">
-                        <strong>{section.title}</strong>
-                        <span>{section.description}</span>
-                      </div>
-                      {section.fields.map(renderParameterField)}
-                    </section>
-                  ))}
-                </div>
-              ) : null}
-
-              {activeModel.requiresTarget && !activeModel.usesRawRows && (
-                <section className="parameter-section">
-                  <div className="parameter-section__header">
-                    <strong>数据处理</strong>
-                    <span>运行前对缺失值和分类变量进行预处理。</span>
-                  </div>
-                  <div className="prep-controls">
-                    <label className="control-group">
-                      <span>缺失值处理</span>
-                      <select
-                        value={prepConfig.missingStrategy}
-                        disabled={isModelRunning}
-                        onChange={(event) =>
-                          setPrepConfig((current) => ({
-                            ...current,
-                            missingStrategy: event.target.value as DataPrepConfig['missingStrategy'],
-                          }))
-                        }
-                      >
-                        {missingOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="control-group">
-                      <span>分类变量编码</span>
-                      <select
-                        value={prepConfig.categoricalEncoding}
-                        disabled={isModelRunning}
-                        onChange={(event) =>
-                          setPrepConfig((current) => ({
-                            ...current,
-                            categoricalEncoding: event.target.value as DataPrepConfig['categoricalEncoding'],
-                          }))
-                        }
-                      >
-                        <option value="one-hot">One-hot 编码</option>
-                        <option value="none">不编码</option>
-                      </select>
-                    </label>
-                  </div>
-                </section>
-              )}
-
-              {activeModel.supportsInference ? (
-                <section className="parameter-section">
-                  <div className="parameter-section__header">
-                    <strong>推断设置</strong>
-                    <span>设置标准误类型和聚类字段。</span>
-                  </div>
-                  <div className="inference-controls">
-                    <label className="control-group">
-                      <span>标准误</span>
-                      <select
-                        value={inferenceConfig.standardError}
-                        disabled={isModelRunning}
-                        onChange={(event) =>
-                          setInferenceConfig((current) => ({
-                            ...current,
-                            standardError: event.target.value as InferenceConfig['standardError'],
-                          }))
-                        }
-                      >
-                        <option value="ols">普通标准误</option>
-                        <option value="robust">Robust 稳健标准误</option>
-                        <option value="cluster">Cluster 聚类稳健标准误</option>
-                      </select>
-                    </label>
-
-                    {inferenceConfig.standardError === 'cluster' ? (
-                      <label className="control-group">
-                        <span>Cluster 字段</span>
-                        <select
-                          value={effectiveInference.clusterField}
-                          disabled={isModelRunning}
-                          onChange={(event) =>
-                            setInferenceConfig((current) => ({
-                              ...current,
-                              clusterField: event.target.value,
-                            }))
-                          }
-                        >
-                          {clusterColumns.map((column) => (
-                            <option key={column} value={column}>
-                              {column}
-                            </option>
-                          ))}
-                        </select>
-                        <small className="model-description">优先使用导入向导中的 ID/Time/Group 字段。</small>
-                      </label>
-                    ) : null}
-                  </div>
-                </section>
-              ) : null}
-
-              <div className="settings-list">
-                {activeModel.getSettings(sanitizedConfig).map((setting) => (
-                  <div key={setting.label}>
-                    <span>{setting.label}</span>
-                    <strong>{setting.value}</strong>
-                  </div>
-                ))}
-              </div>
-
-              <div className="formula-box">
-                <span>Formula</span>
-                <code>{activeModel.getFormula(sanitizedConfig)}</code>
+              <div>
+                <span>检查状态</span>
+                <strong>{validationErrors.length > 0 ? validationErrors[0].message : '可以运行'}</strong>
               </div>
             </div>
-          </details>
+            <button className="primary-button is-full" type="button" onClick={openVariableSetup} disabled={!hasActiveModel || !hasDataset || isModelRunning}>
+              设置变量与参数
+            </button>
+          </section>
 
-          <details className="context-disclosure">
-            <summary>检查、推荐与运行环境</summary>
-            <div className="context-disclosure__body">
-              {validationIssues.length > 0 ? (
-                <div className="parameter-validation">
-                  <strong>运行前检查</strong>
-                  {validationIssues.map((issue) => (
-                    <p className={issue.level === 'error' ? 'is-error' : 'is-warning'} key={issue.message}>
-                      <AlertTriangle size={13} />
-                      {issue.message}
-                    </p>
-                  ))}
-                </div>
-              ) : (
-                <div className="parameter-validation is-ok">
-                  <strong>运行前检查</strong>
-                  <p>
-                    <CheckCircle size={13} />
-                    当前参数可以运行。
-                  </p>
-                </div>
-              )}
-
-              {recommendedModels.length > 0 ? (
-                <div className="model-recommendations">
-                  <strong>数据推荐</strong>
-                  {recommendedModels.map((rec) => {
-                    const plugin = modelPlugins.find((p) => p.id === rec.id)
-                    return plugin ? (
-                      <button
-                        key={rec.id}
-                        className="model-recommendation-chip"
-                        type="button"
-                        onClick={() => {
-                          setActiveModelId(rec.id)
-                          const featureColumns = getFeatureColumnsForPlugin(plugin, profiles.filter((p) => !dimensionColumns.has(p.name)), prepConfig.categoricalEncoding)
-                          setModelConfig(plugin.getDefaultConfig(featureColumns, numericColumns))
-                          setModelUsage((current) => ({
-                            ...current,
-                            [rec.id]: { usedCount: (current[rec.id]?.usedCount ?? 0) + 1, lastUsedAt: new Date().toISOString() },
-                          }))
-                        }}
-                        disabled={isModelRunning}
-                      >
-                        <span>{plugin.name}</span>
-                        <small>{rec.reason}</small>
-                      </button>
-                    ) : null
-                  })}
-                </div>
-              ) : null}
-
-              {activeModelUsesProfessionalBackend && professionalEnv ? (
-                <div className={`professional-env-card is-${professionalStatusLabels[professionalEnv.status].tone}`}>
-                  <div className="professional-env-card__header">
-                    <span>
-                      {professionalEnv.status === 'ready' ? <CheckCircle size={14} /> : professionalEnv.status === 'checking' ? <Activity size={14} /> : <AlertTriangle size={14} />}
-                      {professionalStatusLabels[professionalEnv.status].label}
-                    </span>
-                    <button
-                      className="professional-env-card__refresh"
-                      type="button"
-                      onClick={() => setEnvironmentCheckNonce((current) => current + 1)}
-                      disabled={professionalEnv.status === 'checking' || isModelRunning}
-                    >
-                      {professionalEnv.status === 'checking' ? '检测中' : '重新检测'}
-                    </button>
-                  </div>
-                  <p>{professionalEnv.message}</p>
-                  <div className="professional-env-card__meta">
-                    <span>
-                      <strong>当前路径</strong>
-                      {backendLabels[professionalEnv.activeBackend] ?? professionalEnv.activeBackend}
-                    </span>
-                    <span>
-                      <strong>最近检测</strong>
-                      {formatCheckTime(professionalEnv.checkedAt)}
-                    </span>
-                    <span>
-                      <strong>Python</strong>
-                      {professionalEnv.python?.available ? `${professionalEnv.python.version} · ${professionalEnv.python.path}` : '未检测到'}
-                    </span>
-                  </div>
-                  {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
-                    <div className="professional-env-card__missing">
-                      <strong>完整专业依赖缺失</strong>
-                      <span>{professionalEnv.missingProfessional?.join(', ')}</span>
-                    </div>
-                  ) : null}
-                  {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
-                    <div className="professional-env-card__missing">
-                      <strong>轻量依赖缺失</strong>
-                      <span>{professionalEnv.missingLightweight?.join(', ')}</span>
-                    </div>
-                  ) : null}
-                  {window.visualStatsDesktop?.installProfessionalDependencies && professionalEnv.status !== 'web' ? (
-                    <div className="professional-env-card__actions">
-                      {(professionalEnv.missingLightweight?.length ?? 0) > 0 ? (
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() => installProfessionalDependencies('lightweight')}
-                          disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
-                        >
-                          安装轻量依赖
-                        </button>
-                      ) : null}
-                      {(professionalEnv.missingProfessional?.length ?? 0) > 0 ? (
-                        <button
-                          className="primary-button"
-                          type="button"
-                          onClick={() => installProfessionalDependencies('professional')}
-                          disabled={isModelRunning || professionalEnv.status === 'checking' || professionalInstall.status === 'installing'}
-                        >
-                          安装完整专业依赖
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {professionalInstall.status !== 'idle' ? (
-                    <div className={`professional-install-log is-${professionalInstall.status}`}>
-                      <strong>
-                        {professionalInstall.status === 'installing'
-                          ? '安装中'
-                          : professionalInstall.status === 'success'
-                            ? '安装完成'
-                            : '安装失败'}
-                      </strong>
-                      <span>{professionalInstall.message}</span>
-                      {(professionalInstall.missingAfterInstall?.length ?? 0) > 0 ? (
-                        <span>仍缺失：{professionalInstall.missingAfterInstall?.join(', ')}</span>
-                      ) : null}
-                      {professionalInstall.stderr || professionalInstall.stdout ? <code>{professionalInstall.stderr || professionalInstall.stdout}</code> : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </details>
         </aside>
+        ) : null}
       </section>
+
+      {isVariableSetupOpen ? renderVariableSetupModal() : null}
 
       {isModelLibraryOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -4212,11 +4529,11 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             <div className="modal-summary-strip">
               <div>
                 <span>当前模型</span>
-                <strong>{activeModel.name}</strong>
+                <strong>{hasActiveModel ? activeModel.name : '尚未选择模型'}</strong>
               </div>
               <div>
-                <span>当前分类</span>
-                <strong>{selectedModelCategory}</strong>
+                <span>待应用</span>
+                <strong>{draftModel ? (draftModel.id === activeModelId ? '当前模型' : draftModel.name) : '请先点选模型'}</strong>
               </div>
               <div>
                 <span>匹配结果</span>
@@ -4247,37 +4564,52 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
               </div>
             </div>
 
-            {recentModelPlugins.length > 0 && !modelSearch.trim() && selectedModelCategory === allModelCategory ? (
-              <div className="recent-model-strip">
-                <span>最近使用</span>
-                <div>
-                  {recentModelPlugins.map((plugin) => (
-                    <button type="button" key={plugin.id} onClick={() => switchModel(plugin.id)}>
-                      <strong>{plugin.name}</strong>
-                      <small>{plugin.shortName}</small>
-                    </button>
-                  ))}
+            <div className="model-library-content">
+              {recentModelPlugins.length > 0 && !modelSearch.trim() && selectedModelCategory === allModelCategory ? (
+                <div className="recent-model-strip">
+                  <span>最近使用</span>
+                  <div>
+                    {recentModelPlugins.map((plugin) => (
+                      <button className={plugin.id === draftModel?.id ? 'is-draft' : ''} type="button" key={plugin.id} onClick={() => setDraftModelId(plugin.id)}>
+                        <strong>{plugin.name}</strong>
+                        <small>{plugin.shortName}</small>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            <div className="model-library-grid">
-              {filteredModelPlugins.map((plugin) => (
-                <button
-                  className={`model-library-card ${plugin.id === activeModel.id ? 'is-active' : ''}`}
-                  type="button"
-                  key={plugin.id}
-                  onClick={() => switchModel(plugin.id)}
-                >
-                  <span>{getModelCategory(plugin)}</span>
-                  <strong>
-                    {plugin.name}（{plugin.shortName}）
-                  </strong>
-                  <small>{plugin.fullName}</small>
-                  <p>{getModelUseCase(plugin)}</p>
-                </button>
-              ))}
-              {filteredModelPlugins.length === 0 ? <div className="empty-history">没有匹配的模型插件。</div> : null}
+              <div className="model-library-grid">
+                {filteredModelPlugins.map((plugin) => (
+                  <button
+                    className={`model-library-card ${plugin.id === activeModelId ? 'is-current' : ''} ${plugin.id === draftModel?.id ? 'is-draft' : ''}`}
+                    type="button"
+                    key={plugin.id}
+                    onClick={() => setDraftModelId(plugin.id)}
+                  >
+                    <span>{getModelCategory(plugin)}</span>
+                    {plugin.id === activeModelId ? <em className="model-library-card__status">当前使用</em> : null}
+                    {plugin.id === draftModel?.id && plugin.id !== activeModelId ? <em className="model-library-card__status">待应用</em> : null}
+                    <strong>
+                      {plugin.name}（{plugin.shortName}）
+                    </strong>
+                    <small>{plugin.fullName}</small>
+                    <p>{getModelUseCase(plugin)}</p>
+                  </button>
+                ))}
+                {filteredModelPlugins.length === 0 ? <div className="empty-history">没有匹配的模型插件。</div> : null}
+              </div>
+            </div>
+
+            <div className="model-library-footer">
+              <div>
+                <span>当前待应用</span>
+                <strong>{draftModel?.name ?? '尚未点选模型'}</strong>
+                <small>{draftModel?.fullName ?? '请先在模型库中点选一个模型'}</small>
+              </div>
+              <button className="primary-button" type="button" onClick={applyDraftModel} disabled={isModelRunning || !draftModel || draftModel.id === activeModelId}>
+                {!draftModel ? '请选择模型' : draftModel.id === activeModelId ? '当前已使用' : '使用此模型'}
+              </button>
             </div>
           </section>
         </div>
@@ -4391,8 +4723,120 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
         </div>
       ) : null}
 
-	      {pendingImport ? (
-	        <div className="modal-backdrop" role="presentation">
+      {runFailureDialog ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="run-failure-modal" role="dialog" aria-modal="true" aria-label="模型运行失败">
+            <div className="data-modal__header">
+              <div>
+                <span className="panel__label">Run failed</span>
+                <h2>模型运行失败</h2>
+                <p>{runFailureDialog.modelName} · {runFailureDialog.formula}</p>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setRunFailureDialog(null)} title="关闭">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="run-failure-modal__body">
+              <div className="run-failure-message">
+                <AlertTriangle size={18} />
+                <div>
+                  <strong>{runFailureDialog.message}</strong>
+                  <p>请回到变量设定，减少高度相关变量、调整固定效应或修改参数后重新运行。</p>
+                </div>
+              </div>
+              {validationErrors.length > 0 ? (
+                <p className="run-failure-hint">当前仍需处理：{validationErrors[0].message}</p>
+              ) : null}
+            </div>
+
+            <div className="import-wizard__footer">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setRunFailureDialog(null)
+                  openVariableSetup()
+                }}
+              >
+                返回变量设定
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setRunFailureDialog(null)
+                  handleRunModel()
+                }}
+                disabled={validationErrors.length > 0 || !hasActiveModel || !hasDataset || isModelRunning}
+              >
+                <Play size={14} />
+                重新运行
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {missingValueAlert ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="missing-alert-modal" role="dialog" aria-modal="true" aria-label="缺失值提醒">
+            <div className="data-modal__header">
+              <div>
+                <span className="panel__label">Missing values</span>
+                <h2>检测到缺失值</h2>
+                <p>{missingValueAlert.fileName} · 上传后先确认数据质量，再继续设置维度字段。</p>
+              </div>
+              <button className="ghost-button" type="button" onClick={cancelMissingValueImport} title="取消导入">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="missing-alert-modal__body">
+              <div className="missing-alert-summary">
+                <div>
+                  <span>缺失单元格</span>
+                  <strong>{missingValueAlert.missingCells}</strong>
+                </div>
+                <div>
+                  <span>涉及行数</span>
+                  <strong>{missingValueAlert.affectedRows}</strong>
+                </div>
+                <div>
+                  <span>涉及字段</span>
+                  <strong>{missingValueAlert.fields.length}</strong>
+                </div>
+              </div>
+
+              <div className="missing-alert-fields">
+                <strong>缺失较多的字段</strong>
+                {missingValueAlert.fields.slice(0, 6).map((field) => (
+                  <div key={field.name}>
+                    <span>{field.name}</span>
+                    <em>{field.missing} 个缺失</em>
+                  </div>
+                ))}
+              </div>
+
+              <p className="missing-alert-note">
+                当前模型运行仍沿用默认规则：目标变量缺失会被排除，解释变量缺失按现有运行规则处理。
+              </p>
+            </div>
+
+            <div className="import-wizard__footer">
+              <button className="secondary-button" type="button" onClick={cancelMissingValueImport}>
+                取消导入
+              </button>
+              <button className="primary-button" type="button" onClick={continueImportAfterMissingAlert}>
+                继续设置维度字段
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingImport ? (
+        <div className="modal-backdrop" role="presentation">
           <section className="import-wizard" role="dialog" aria-modal="true" aria-label="导入数据向导">
             <div className="data-modal__header">
               <div>
@@ -4504,22 +4948,29 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                   <h2>导入预览</h2>
                   <span className="section-meta">前 {pendingPreviewRows.length} 行</span>
                 </div>
-                <div
-                  className="data-preview"
-                  style={{ gridTemplateColumns: `repeat(${pendingColumns.length}, minmax(110px, 1fr))` }}
-                >
-                  {pendingColumns.map((column) => (
-                    <strong className={hasField(pendingImport.roles, column) ? 'is-dimension-column' : ''} key={column}>
-                      {column}
-                    </strong>
-                  ))}
-                  {pendingPreviewRows.flatMap((row, rowIndex) =>
-                    pendingColumns.map((column) => (
-                      <span className={row[column] === null || row[column] === '' ? 'is-missing' : ''} key={`${rowIndex}-${column}`}>
-                        {previewValue(row[column])}
-                      </span>
-                    )),
-                  )}
+                <div className="import-preview__table-shell">
+                  <div
+                    className="data-preview data-preview--import data-preview--import-header"
+                    style={{ gridTemplateColumns: `repeat(${pendingColumns.length}, minmax(96px, 132px))` }}
+                  >
+                    {pendingColumns.map((column) => (
+                      <strong className={hasField(pendingImport.roles, column) ? 'is-dimension-column' : ''} key={column}>
+                        {column}
+                      </strong>
+                    ))}
+                  </div>
+                  <div
+                    className="data-preview data-preview--import data-preview--import-body"
+                    style={{ gridTemplateColumns: `repeat(${pendingColumns.length}, minmax(96px, 132px))` }}
+                  >
+                    {pendingPreviewRows.flatMap((row, rowIndex) =>
+                      pendingColumns.map((column) => (
+                        <span className={isMissingCell(row[column]) ? 'is-missing' : ''} key={`${rowIndex}-${column}`}>
+                          {previewValue(row[column])}
+                        </span>
+                      )),
+                    )}
+                  </div>
                 </div>
               </section>
             </div>

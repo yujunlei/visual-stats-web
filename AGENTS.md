@@ -71,7 +71,7 @@ Current stack:
 - `write-excel-file`
 - `lucide-react`
 
-Statistical calculations are split between browser-side TypeScript plugins and Electron IPC calls to the Python professional backend for some models.
+Statistical calculations run in browser-side TypeScript plugins. Electron is used for the desktop shell, not for unrestricted model execution.
 
 Important files:
 
@@ -94,24 +94,37 @@ package.json
 
 ---
 
-## Local Multi-Agent Workflow
+## Local Codex Multi-Agent Workflow
 
-This project uses a semi-automated local multi-agent workflow.
+This project uses a semi-automated local multi-agent workflow built entirely on Codex.
 
 There are three roles:
 
-1. **Architect Reviewer Agent**
-   - Powered by Codex / GPT 5.5.
-   - Responsible for planning, task decomposition, diff review, and merge recommendation.
-   - This role is **not** a Hermes profile.
+1. **Codex Architect Agent**
+   - Runs in the main repository: `visual-stats-web/`.
+   - Responsible for requirement understanding, planning, task decomposition, task dispatch guidance, diff review, and merge recommendation.
+   - Uses `.agents/codex-architect.md`.
 
-2. **Frontend Implementer Agent**
-   - Powered by Hermes profile + MiniMax 2.6.
+2. **Codex Frontend Agent**
+   - Runs in the frontend worktree: `../visual-stats-web-frontend/`.
    - Responsible for UI, JSX, CSS, layout, and interaction execution.
+   - Uses `.agents/codex-frontend.md`.
 
-3. **Refactor Implementer Agent**
-   - Powered by Hermes profile + MiniMax 2.6.
+3. **Codex Refactor Agent**
+   - Runs in the refactor worktree: `../visual-stats-web-refactor/`.
    - Responsible for low-risk refactoring, extracting components, hooks, utilities, and reducing App.tsx complexity.
+   - Uses `.agents/codex-refactor.md`.
+
+The workflow keeps:
+
+- `.agent-tasks/` task briefs.
+- `.agent-reviews/` review packs.
+- isolated git worktrees for implementation.
+
+The workflow also uses local governance guidance:
+
+- `.codex/governance/meta-kim-contract.md` for stage, contract, review, verification, and evolution discipline.
+- `.codex/governance/karpathy-guidelines.md` for assumption control, simplicity, surgical changes, and goal-driven verification.
 
 ---
 
@@ -120,12 +133,12 @@ There are three roles:
 All development should follow this flow:
 
 ```text
-1. Architect Reviewer reads the user requirement.
-2. Architect Reviewer creates a task brief.
+1. Codex Architect reads the user requirement.
+2. Codex Architect creates a task brief.
 3. Task brief is saved under .agent-tasks/.
-4. One Hermes implementer agent executes the task.
+4. The user opens the correct Codex worktree and runs the assigned Codex execution agent with the task brief.
 5. Implementer outputs code changes and diff.
-6. Architect Reviewer reviews the diff.
+6. Codex Architect reviews the diff or review pack.
 7. Only after review should the change be committed.
 ```
 
@@ -134,6 +147,8 @@ Implementation agents must not start work without a task brief.
 Implementation agents must not modify files outside the task brief.
 
 Implementation agents must not commit or push directly unless explicitly instructed.
+
+Final merge decisions belong to the user. Codex agents must not automatically merge, commit, or push.
 
 ---
 
@@ -182,7 +197,7 @@ npm run build 是否通过
 
 No implementation agent should merge changes automatically.
 
-The final merge decision belongs to the user after Architect Reviewer review.
+The final merge decision belongs to the user after Codex Architect review.
 
 ---
 
@@ -356,9 +371,8 @@ Rules:
 - Do not enable `nodeIntegration`.
 - Keep `contextIsolation: true`.
 - Do not expose unrestricted IPC channels.
-- Validate payloads before sending to Python backend.
 - Do not allow arbitrary command execution from renderer.
-- Keep Python backend calls narrow and explicit.
+- Keep IPC channels narrow and explicit.
 
 ---
 

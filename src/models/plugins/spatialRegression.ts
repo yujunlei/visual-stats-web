@@ -823,9 +823,9 @@ const createSpatialPlugin = (spec: SpatialSpec): ModelPlugin => ({
   maturity: {
     level: 'preview',
     label: '预览',
-    description: '桌面端优先调用 Python PySAL/spreg 专业后端；Web 环境保留浏览器内空间估计 fallback。',
+    description: '使用浏览器内置空间估计实现，适合先完成空间权重与变量设定探索。',
   },
-  limitations: ['专业估计需要桌面端和 Python 空间计量依赖；依赖缺失时会自动降级为浏览器内估计。', '当前专业后端优先支持 CSV/矩阵/边表 W，.gal/.gwt/.shp/GeoJSON 文件解析仍待增强。'],
+  limitations: ['当前空间估计运行在浏览器内，建议先用小字段集确认设定后再完整运行。', '当前优先支持 CSV/矩阵/边表 W，.gal/.gwt/.shp/GeoJSON 文件解析仍待增强。'],
   requiresTarget: true,
   targetLabel: spec.kind === 'spatial-logit' ? '二分类因变量 Y' : '因变量 Y',
   featuresLabel: spec.kind === 'panel-sdm' ? '空间键、面板维度、解释变量' : '空间键、解释变量',

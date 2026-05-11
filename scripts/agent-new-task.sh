@@ -6,19 +6,30 @@ ASSIGNED_AGENT="${2:-}"
 TASK_TITLE="${3:-}"
 
 if [ -z "$TASK_ID" ] || [ -z "$ASSIGNED_AGENT" ] || [ -z "$TASK_TITLE" ]; then
-  echo "用法：./scripts/agent-new-task.sh TASK-001 \"Frontend Implementer\" \"任务标题\""
+  echo "用法：./scripts/agent-new-task.sh TASK-001 \"Codex Frontend\" \"任务标题\""
   echo
   echo "示例："
-  echo "./scripts/agent-new-task.sh TASK-001 \"Refactor Implementer\" \"抽出结果页格式化工具函数\""
+  echo "./scripts/agent-new-task.sh TASK-001 \"Codex Refactor\" \"抽出结果页格式化工具函数\""
   exit 1
 fi
 
-if [ "$ASSIGNED_AGENT" != "Frontend Implementer" ] && [ "$ASSIGNED_AGENT" != "Refactor Implementer" ]; then
+case "$ASSIGNED_AGENT" in
+  "Codex Frontend"|"Codex Refactor")
+    ;;
+  "Frontend Implementer")
+    echo "提示：Frontend Implementer 是旧别名，新任务建议使用 Codex Frontend。"
+    ;;
+  "Refactor Implementer")
+    echo "提示：Refactor Implementer 是旧别名，新任务建议使用 Codex Refactor。"
+    ;;
+  *)
   echo "错误：Assigned Agent 只能是："
-  echo "- Frontend Implementer"
-  echo "- Refactor Implementer"
+  echo "- Codex Frontend"
+  echo "- Codex Refactor"
+  echo "兼容旧别名：Frontend Implementer, Refactor Implementer"
   exit 1
-fi
+    ;;
+esac
 
 if [ ! -f "AGENTS.md" ]; then
   echo "错误：请在 visual-stats-web 仓库或 worktree 根目录运行。缺少 AGENTS.md。"
@@ -50,6 +61,37 @@ ${ASSIGNED_AGENT}
 
 在这里填写本次任务的明确目标。目标必须小而清晰，不要一次性覆盖多个业务流程。
 
+## Meta_Kim Governance Packet
+
+\`\`\`text
+intentPacket:
+  Goal:
+  Success Criteria:
+  Out of Scope:
+  Risk Level:
+
+fetchPacket:
+  Files inspected:
+  Existing workflow assets:
+  Matching capability:
+  Capability gaps:
+
+dispatchBoard:
+  Assigned Agent: ${ASSIGNED_AGENT}
+  Worktree:
+  Review Owner: Codex Architect
+  Verification Commands:
+\`\`\`
+
+## Karpathy Discipline
+
+\`\`\`text
+Assumptions:
+Simplicity Check:
+Surgical Change Boundary:
+Verification Goal:
+\`\`\`
+
 ## Allowed Files
 
 \`\`\`text
@@ -70,6 +112,7 @@ src/export/publicationTables.ts
 electron/main.cjs
 electron/preload.cjs
 package.json
+package-lock.json
 \`\`\`
 
 ## Implementation Steps
@@ -87,6 +130,7 @@ package.json
 - [ ] 不破坏三列式专业工作台布局
 - [ ] 不修改 Forbidden Files
 - [ ] 不新增不必要依赖
+- [ ] 符合 Karpathy discipline：无隐藏假设、无过度抽象、无无关改动、有验证证据
 - [ ] npm run typecheck 通过
 - [ ] npm run lint 通过
 - [ ] npm run build 通过
@@ -113,9 +157,12 @@ npm run build
 测试结果：
 风险说明：
 git diff 摘要：
+verificationResult：
+evolutionWriteback：
+karpathyCheck：
 \`\`\`
 EOF
 
 echo "任务文件已创建：$TASK_FILE"
 echo
-echo "下一步：请打开该文件，补全 Goal / Allowed Files / Risk Notes 后再执行 Hermes Agent。"
+echo "下一步：请打开该文件，补全 Goal / Allowed Files / Risk Notes 后运行 ./scripts/agent-dispatch-task.sh。"

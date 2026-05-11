@@ -16,7 +16,7 @@ export type PublicationColumn = {
   subGroup?: string
 }
 
-export type PublicationRowRole = 'title' | 'model' | 'header' | 'coefficient' | 'statistic' | 'fixedEffect' | 'metric' | 'note'
+export type PublicationRowRole = 'title' | 'model' | 'group' | 'header' | 'columnIndex' | 'coefficient' | 'statistic' | 'fixedEffect' | 'metric' | 'note'
 
 export type PublicationRow = {
   role: PublicationRowRole
@@ -95,7 +95,7 @@ const publicationParenthesisLabel = (mode: PublicationFormatRules['parenthesisMo
 }
 
 const buildPublicationNote = (rules: PublicationFormatRules) =>
-  `注：稳健标准误；括号内为 ${publicationParenthesisLabel(rules.parenthesisMode)}；* p<${rules.starLevels.one}，** p<${rules.starLevels.two}，*** p<${rules.starLevels.three}`
+  `注：稳健标准误；括号内为 ${publicationParenthesisLabel(rules.parenthesisMode)}；* p<${rules.starLevels.one}，** p<${rules.starLevels.two}，*** p<${rules.starLevels.three}。`
 
 const significanceStars = (pValue: unknown, thresholds: PublicationFormatRules['starLevels']) => {
   if (typeof pValue !== 'number') return ''
@@ -361,14 +361,24 @@ export const buildCustomPublicationTable = ({
     })
   }
 
-  const rows: PublicationRow[] = [
-    { role: 'title', label: title || '自定义论文表', values: columnSources.map(() => '') },
-    ...(hasGroups ? [{ role: 'model' as const, label: 'Model', values: groupValues }] : []),
-    ...(modelValues.some(Boolean) ? [{ role: 'model' as const, label: hasGroups ? '' : 'Model', values: modelValues }] : []),
-    { role: 'header', label: 'Variables', values: columnSources.map((source) => source.column.label) },
-    ...orderedTerms.flatMap(rowForTerm),
-    ...statisticRows,
-  ]
+  const defaultColumnLabels = columnSources.map((_, index) => `(${index + 1})`)
+  const columnLabels = columnSources.map((source) => source.column.label)
+  const hasCustomColumnLabels = columnLabels.some((label, index) => label.trim() && label.trim() !== defaultColumnLabels[index])
+  const rows: PublicationRow[] = [{ role: 'title', label: title || '自定义论文表', values: columnSources.map(() => '') }]
+
+  if (modelValues.some(Boolean)) {
+    rows.push({ role: 'model', label: 'Model', values: modelValues })
+  }
+  if (hasGroups) {
+    rows.push({ role: 'group', label: '', values: groupValues })
+  }
+  if (hasCustomColumnLabels) {
+    rows.push({ role: 'header', label: 'Variables', values: columnLabels })
+    rows.push({ role: 'columnIndex', label: '', values: defaultColumnLabels })
+  } else {
+    rows.push({ role: 'columnIndex', label: 'Variables', values: defaultColumnLabels })
+  }
+  rows.push(...orderedTerms.flatMap(rowForTerm), ...statisticRows)
 
   const noteRowIndex = rows.length
   const merges: PublicationMerge[] = [
@@ -377,12 +387,25 @@ export const buildCustomPublicationTable = ({
   ]
 
   if (hasGroups) {
+    const groupRowIndex = rows.findIndex((row) => row.role === 'group')
     let start = 0
     while (start < groupValues.length) {
       const group = groupValues[start]
       let end = start + 1
       while (end < groupValues.length && groupValues[end] === group) end += 1
-      if (group && end - start > 1) merges.push({ rowIndex: 1, columnIndex: start + 1, columnSpan: end - start })
+      if (group && end - start > 1) merges.push({ rowIndex: groupRowIndex, columnIndex: start + 1, columnSpan: end - start })
+      start = end
+    }
+  }
+
+  const modelRowIndex = rows.findIndex((row) => row.role === 'model')
+  if (modelRowIndex > -1 && columnSources.length > 1) {
+    let start = 0
+    while (start < modelValues.length) {
+      const model = modelValues[start]
+      let end = start + 1
+      while (end < modelValues.length && modelValues[end] === model) end += 1
+      if (model && end - start > 1) merges.push({ rowIndex: modelRowIndex, columnIndex: start + 1, columnSpan: end - start })
       start = end
     }
   }

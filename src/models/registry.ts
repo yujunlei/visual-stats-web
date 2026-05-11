@@ -1,4 +1,3 @@
-import { berTopicPlugin } from './plugins/berTopic'
 import { commonMethodPlugins } from './plugins/commonMethods'
 import { correlationAnalysisPlugin } from './plugins/correlationAnalysis'
 import { descriptiveStatsPlugin } from './plugins/descriptiveStats'
@@ -27,7 +26,6 @@ export const modelPlugins = [
   logitRegressionPlugin,
   descriptiveStatsPlugin,
   correlationAnalysisPlugin,
-  berTopicPlugin,
 ]
 
 export const getModelPlugin = (id: string) => {
