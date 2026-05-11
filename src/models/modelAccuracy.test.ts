@@ -126,11 +126,42 @@ describe('stable model numeric fixtures', () => {
     const coefficients = result.tables.find((table) => table.id === 'coefficients')?.rows ?? []
 
     expect(coefficient(coefficients, 'x')).toBeCloseTo(1.5, 8)
-    expect(coefficients.some((row) => row.term === '_cons')).toBe(false)
+    expect(coefficients.some((row) => row.term === '_cons')).toBe(true)
     expect(metric(result.summary, 'Absorbed FE')).toBe(2)
     expect(metric(result.summary, 'Singleton groups')).toBe(0)
     expect(metric(result.summary, 'FE iterations')).toBeGreaterThan(0)
     expect(metric(result.summary, 'FE max delta')).toBeGreaterThanOrEqual(0)
     expect(metricValue(result.summary, 'FE converged')).toBe('Yes')
+  })
+
+  it('keeps non-ASCII reghdfe regressors distinct after fixed-effect absorption', () => {
+    const plugin = getModelPlugin('reghdfe-regression')
+    const entityEffects: Record<string, number> = { A: 4, B: -2, C: 7, D: 1 }
+    const timeEffects: Record<string, number> = { '2020': 1, '2021': -1.5, '2022': 3, '2023': 0.5 }
+    const rows: Row[] = Object.entries(entityEffects).flatMap(([entity, entityEffect], entityIndex) =>
+      Object.entries(timeEffects).map(([year, timeEffect], timeIndex) => {
+        const x1 = (entityIndex + 1) * (timeIndex + 2)
+        const x2 = (entityIndex + 2) ** 2 * (timeIndex + 1)
+        return {
+          entity,
+          year,
+          'ln科学技术水平': x1,
+          'ln经济发展水平': x2,
+          y: entityEffect + timeEffect + 1.2 * x1 - 0.7 * x2,
+        }
+      }),
+    )
+    const result = plugin.fit({
+      rows,
+      config: {
+        target: 'y',
+        features: ['entity', 'year', 'ln科学技术水平', 'ln经济发展水平'],
+        params: { target: 'y', fixedEffects: ['entity', 'year'], regressors: ['ln科学技术水平', 'ln经济发展水平'] },
+      },
+    })
+    const coefficients = result.tables.find((table) => table.id === 'coefficients')?.rows ?? []
+
+    expect(coefficient(coefficients, 'ln科学技术水平')).toBeCloseTo(1.2, 8)
+    expect(coefficient(coefficients, 'ln经济发展水平')).toBeCloseTo(-0.7, 8)
   })
 })

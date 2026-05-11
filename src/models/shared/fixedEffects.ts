@@ -18,6 +18,18 @@ const compact = (value: Row[string]) => (value === null || value === undefined |
 
 const residualName = (prefix: string, column: string) => `${prefix}_${column}`.replace(/[^\w=.-]/g, '_')
 
+const residualNames = (prefix: string, columns: string[]) => {
+  const used = new Map<string, number>()
+
+  return columns.map((column, index) => {
+    const base = residualName(prefix, column) || `${prefix}_${index}`
+    const count = used.get(base) ?? 0
+    used.set(base, count + 1)
+
+    return count === 0 ? base : `${base}_${count + 1}`
+  })
+}
+
 export const formatXtregCommand = (target: string, regressors: string[], panelId: string, inference?: InferenceConfig) => {
   const vce = inference?.standardError === 'robust' ? ' vce(robust)' : inference?.standardError === 'cluster' && inference.clusterField ? ` vce(cluster ${inference.clusterField})` : ''
 
@@ -139,8 +151,7 @@ export const absorbFixedEffects = ({
     }
   }
 
-  const targetName = residualName(prefix, target)
-  const featureNames = regressors.map((regressor) => residualName(prefix, regressor))
+  const [targetName, ...featureNames] = residualNames(prefix, [target, ...regressors])
   const transformedRows = residuals.map((values, rowIndex) =>
     values.reduce<Row>((row, value, index) => {
       row[index === 0 ? targetName : featureNames[index - 1]] = value

@@ -17,13 +17,13 @@
   "config": { "target": "y", "features": ["entity", "year", "x"], "params": { "target": "y", "fixedEffects": ["entity", "year"], "regressors": ["x"] } },
   "expected": {
     "coefficients": { "x": { "coefficient": 1.5 } },
-    "absentCoefficients": ["_cons"],
+    "presentCoefficients": ["_cons"],
     "summary": {
       "Number of obs": 9,
       "Dropped singleton obs": 1,
       "Stata command": "reghdfe y x, absorb(entity year)"
     },
-    "finiteSummary": ["Within R2", "Root MSE"],
+    "finiteSummary": ["R-squared", "Adj R-squared", "Within R-sq.", "Within R2", "Root MSE"],
     "warningsInclude": ["递归删除 1 条 singleton"]
   }
 }

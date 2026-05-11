@@ -1,12 +1,15 @@
 import { csvSummarySection, csvTableSection } from '../shared/csv'
+import { toNumber } from '../../data/tableUtils'
 import { compactConfig, paramArray, paramString } from '../shared/config'
 import { absorbFixedEffects, formatReghdfeCommand, nestedFixedEffectsInCluster } from '../shared/fixedEffects'
 import { createResidualDiagnosticsTable, createRobustnessTable } from '../shared/postEstimation'
-import { fitOlsDroppingCollinear, olsCoefficientColumns } from '../shared/regression'
+import { fitOlsDroppingCollinear, normalPValue, olsCoefficientColumns } from '../shared/regression'
 import type { ModelPlugin, ModelResult } from '../types'
 
-const effectColumns = ['effect', 'groups', 'singletonGroups', 'minObs', 'maxObs', 'avgObs', 'absorbedDf']
+const effectColumns = ['Absorbed FE', 'Categories', 'Redundant', 'Num. Coefs', 'Nested']
 const droppedColumns = ['variable', 'reason']
+
+const finiteMean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
 
 export const reghdfeRegressionPlugin: ModelPlugin = {
   id: 'reghdfe-regression',
@@ -112,17 +115,66 @@ export const reghdfeRegressionPlugin: ModelPlugin = {
     const { fit, droppedFeatures } = fitOlsDroppingCollinear(absorbed.rows, absorbed.target, absorbed.features, this.name, inference, fitOptions)
     const residualDiagnosticsTable = createResidualDiagnosticsTable(absorbed.rows, absorbed.target, absorbed.features, fit)
     const robustnessTable = createRobustnessTable(absorbed.rows, { target: absorbed.target, features: absorbed.features }, undefined, inference)
-    const coefficientRows = fit.coefficients
-      .filter((row) => row.term !== '_cons')
-      .map((row) => ({
-        ...row,
-        term: regressors[absorbed.features.indexOf(row.term)] ?? row.term,
-      }))
+    const activeRegressors = fit.featureNames.map((feature) => regressors[absorbed.features.indexOf(feature)] ?? feature)
+    const coefficientRows = fit.coefficients.map((row) => ({
+      ...row,
+      term: regressors[absorbed.features.indexOf(row.term)] ?? row.term,
+    }))
+    const originalRows = absorbed.sourceRows.flatMap((row) => {
+      const y = toNumber(row[config.target])
+      const x = activeRegressors.map((regressor) => toNumber(row[regressor]))
+      if (y === null || x.some((value) => value === null)) return []
+      const numericX = x as number[]
+      return [{ y, x: numericX }]
+    })
+    const originalY = absorbed.sourceRows.map((row) => toNumber(row[config.target])).filter((value): value is number => value !== null)
+    const originalMeanY = originalY.length > 0 ? finiteMean(originalY) : 0
+    const originalSst = originalY.reduce((sum, value) => sum + (value - originalMeanY) ** 2, 0)
+    const fullResidualDf = Math.max(absorbed.observations - fit.featureNames.length - absorbed.absorbedDf, 1)
+    const overallR2 = originalSst === 0 ? 0 : 1 - fit.sse / originalSst
+    const overallAdjustedR2 = 1 - (1 - overallR2) * ((absorbed.observations - 1) / fullResidualDf)
+    const stataRootMse = Math.sqrt(fit.sse / fullResidualDf)
+    const intercept =
+      originalRows.length > 0
+        ? finiteMean(originalRows.map((row) => row.y)) - activeRegressors.reduce((sum, _, index) => sum + (fit.beta[index] ?? 0) * finiteMean(originalRows.map((row) => row.x[index])), 0)
+        : 0
+    const interceptStdError = fit.rootMse / Math.sqrt(Math.max(absorbed.observations, 1))
+    const interceptT = interceptStdError === 0 ? 0 : intercept / interceptStdError
+    const interceptP = normalPValue(interceptT)
+    const coefficientRowsWithConstant = [
+      ...coefficientRows,
+      {
+        term: '_cons',
+        coefficient: intercept,
+        stdError: interceptStdError,
+        tValue: interceptT,
+        pValue: interceptP,
+        ciLow: intercept - 1.96 * interceptStdError,
+        ciHigh: intercept + 1.96 * interceptStdError,
+      },
+    ]
     const singletonGroups = absorbed.groups.reduce((sum, entry) => sum + entry.singletonGroups, 0)
+    const absorbedDfRows = absorbed.groups.map((group) => {
+      const nested = nestedEffects.includes(group.effect)
+      const redundant = nested ? group.groups : Math.min(1, group.groups)
+      return {
+        'Absorbed FE': group.effect,
+        Categories: group.groups,
+        Redundant: redundant,
+        'Num. Coefs': nested ? 0 : Math.max(group.groups - redundant, 0),
+        Nested: nested ? '*' : '',
+      }
+    })
+    const numberOfClustersLabel = inference?.standardError === 'cluster' && inference.clusterField ? `Number of clusters (${inference.clusterField})` : ''
+    const standardErrorLabel =
+      inference?.standardError === 'cluster' && inference.clusterField && clusterCount
+        ? `Std. err. adjusted for ${clusterCount} clusters in ${inference.clusterField}`
+        : fit.standardError
     const warnings = [
       ...fit.warnings,
       ...(absorbed.droppedSingletonRows > 0 ? [`reghdfe 默认口径已递归删除 ${absorbed.droppedSingletonRows} 条 singleton 观测。`] : []),
       ...(nestedEffects.length > 0 ? [`固定效应 ${nestedEffects.join(', ')} 嵌套在聚类字段内，DoF 惩罚已按 reghdfe 文档口径避免重复扣除。`] : []),
+      ...(nestedEffects.length > 0 ? ['* = FE nested within cluster; treated as redundant for DoF computation'] : []),
       ...(singletonGroups > 0 ? [`吸收固定效应中存在 ${singletonGroups} 个 singleton 组；当前保留这些观测并在吸收变换后参与估计。`] : []),
       ...(!absorbed.converged ? [`固定效应吸收在 ${absorbed.iterations} 次迭代后仍未达到默认收敛阈值。`] : []),
     ]
@@ -143,17 +195,21 @@ export const reghdfeRegressionPlugin: ModelPlugin = {
         { label: 'FE max delta', value: absorbed.maxDelta },
         { label: `F(${fit.dfModel}, ${fit.inferenceDf})`, value: fit.fValue },
         { label: 'Prob > F', value: fit.fPValue },
+        { label: 'R-squared', value: overallR2 },
+        { label: 'Adj R-squared', value: overallAdjustedR2 },
         { label: 'Within R2', value: fit.r2 },
-        { label: 'Root MSE', value: fit.rootMse },
-        { label: 'Std. error', value: fit.standardError === 'cluster' ? `Cluster ${fit.clusterField}` : fit.standardError },
+        { label: 'Within R-sq.', value: fit.r2 },
+        { label: 'Root MSE', value: stataRootMse },
+        ...(numberOfClustersLabel ? [{ label: numberOfClustersLabel, value: clusterCount ?? 0 }] : []),
+        { label: 'Std. error', value: standardErrorLabel },
         { label: 'Stata command', value: formatReghdfeCommand(config.target, regressors, fixedEffects, inference) },
       ],
       tables: [
         {
           id: 'effects',
-          title: '吸收固定效应',
+          title: 'Absorbed degrees of freedom',
           columns: effectColumns,
-          rows: absorbed.groups,
+          rows: absorbedDfRows,
         },
         ...(droppedFeatures.length > 0
           ? [
@@ -169,7 +225,7 @@ export const reghdfeRegressionPlugin: ModelPlugin = {
           id: 'coefficients',
           title: `reghdfe 系数 (${config.target})`,
           columns: olsCoefficientColumns,
-          rows: coefficientRows,
+          rows: coefficientRowsWithConstant,
         },
         residualDiagnosticsTable,
         ...(robustnessTable ? [robustnessTable] : []),
@@ -178,7 +234,7 @@ export const reghdfeRegressionPlugin: ModelPlugin = {
       warnings,
       message: `reghdfe 当前使用迭代去均值吸收多重固定效应；${
         droppedFeatures.length > 0 ? `已自动剔除共线变量：${droppedFeatures.join(', ')}。` : ''
-      }固定效应模型不报告普通截距项，系数表仅展示吸收变换后的解释变量。`,
+      }输出结构按 Stata/reghdfe 截图口径保留 _cons，并展示 absorbed degrees of freedom 表。`,
     } satisfies ModelResult
   },
 

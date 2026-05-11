@@ -16,7 +16,7 @@
   "config": { "target": "y", "features": ["entity", "year", "x"], "params": { "target": "y", "fixedEffects": ["entity", "year"], "regressors": ["x"] } },
   "expected": {
     "coefficients": { "x": { "coefficient": 1.5 } },
-    "absentCoefficients": ["_cons"],
+    "presentCoefficients": ["_cons"],
     "summary": {
       "Number of obs": 9,
       "Absorbed FE": 2,
@@ -27,6 +27,11 @@
       "Dropped singleton obs": 0,
       "Stata command": "reghdfe y x, absorb(entity year)"
     },
-    "finiteSummary": ["Within R2", "Root MSE"]
+    "finiteSummary": ["R-squared", "Adj R-squared", "Within R-sq.", "Within R2", "Root MSE"],
+    "tables": {
+      "effects": {
+        "columns": ["Absorbed FE", "Categories", "Redundant", "Num. Coefs", "Nested"]
+      }
+    }
   }
 }

@@ -17,18 +17,28 @@
   "inference": { "standardError": "cluster", "clusterField": "entity" },
   "expected": {
     "coefficients": { "x": { "coefficient": 1.5 } },
-    "absentCoefficients": ["_cons"],
+    "presentCoefficients": ["_cons"],
     "summary": {
       "Number of obs": 9,
+      "Number of clusters (entity)": 3,
       "Absorbed FE": 2,
       "Absorbed df": 4,
       "Nested absorbed df": 2,
       "Effective absorbed df": 2,
       "Residual df": 6,
-      "Std. error": "Cluster entity",
+      "Std. error": "Std. err. adjusted for 3 clusters in entity",
       "Stata command": "reghdfe y x, absorb(entity year) vce(cluster entity)"
     },
-    "finiteSummary": ["Within R2", "Root MSE"],
-    "warningsInclude": ["嵌套在聚类字段内"]
+    "finiteSummary": ["R-squared", "Adj R-squared", "Within R-sq.", "Within R2", "Root MSE"],
+    "warningsInclude": ["嵌套在聚类字段内", "* = FE nested within cluster; treated as redundant for DoF computation"],
+    "tables": {
+      "effects": {
+        "columns": ["Absorbed FE", "Categories", "Redundant", "Num. Coefs", "Nested"],
+        "rows": [
+          { "Absorbed FE": "entity", "Categories": 3, "Redundant": 3, "Num. Coefs": 0, "Nested": "*" },
+          { "Absorbed FE": "year", "Categories": 3, "Redundant": 1, "Num. Coefs": 2, "Nested": "" }
+        ]
+      }
+    }
   }
 }

@@ -17,7 +17,7 @@
   "inference": { "standardError": "robust", "clusterField": "" },
   "expected": {
     "coefficients": { "x": { "coefficient": 1.5 } },
-    "absentCoefficients": ["_cons"],
+    "presentCoefficients": ["_cons"],
     "summary": {
       "Number of obs": 9,
       "Absorbed FE": 2,
@@ -26,6 +26,6 @@
       "Std. error": "robust",
       "Stata command": "reghdfe y x, absorb(entity year) vce(robust)"
     },
-    "finiteSummary": ["Within R2", "Root MSE"]
+    "finiteSummary": ["R-squared", "Adj R-squared", "Within R-sq.", "Within R2", "Root MSE"]
   }
 }

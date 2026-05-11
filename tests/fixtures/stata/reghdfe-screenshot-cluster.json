@@ -1,0 +1,87 @@
+{
+  "id": "reghdfe-screenshot-cluster",
+  "pluginId": "reghdfe-regression",
+  "dataFixture": "reghdfe-screenshot-cluster-data.json",
+  "source": "User-provided original workbook /Users/dengjy16/Downloads/基准回归.xlsx; fixture keeps only columns used by the screenshot command and derives X_square = X ** 2 because the workbook does not contain X_square.",
+  "stataCommand": "reghdfe 新Y ln数字经济发展水平 X X_square ln科学技术水平 ln经济发展水平 ln创业活力 lnHEC lnindustry, ab(id year) vce(cluster id)",
+  "config": {
+    "target": "新Y",
+    "features": ["id", "year", "ln数字经济发展水平", "X", "X_square", "ln科学技术水平", "ln经济发展水平", "ln创业活力", "lnHEC", "lnindustry"],
+    "params": {
+      "target": "新Y",
+      "fixedEffects": ["id", "year"],
+      "regressors": ["ln数字经济发展水平", "X", "X_square", "ln科学技术水平", "ln经济发展水平", "ln创业活力", "lnHEC", "lnindustry"]
+    }
+  },
+  "inference": {
+    "standardError": "cluster",
+    "clusterField": "id"
+  },
+  "expected": {
+    "presentCoefficients": ["ln数字经济发展水平", "X", "X_square", "ln科学技术水平", "ln经济发展水平", "ln创业活力", "lnHEC", "lnindustry", "_cons"],
+    "coefficients": {
+      "ln数字经济发展水平": { "coefficient": -0.00016648559680138827, "stdError": 0.0007045563217443433, "tValue": -0.2362984926303728, "pValue": 0.8133756486884403 },
+      "X": { "coefficient": -0.024140901764950567, "stdError": 0.0051380822048921375, "tValue": -4.6984265339245095, "pValue": 0.000004134126406096783 },
+      "X_square": { "coefficient": 0.0020780029868980887, "stdError": 0.00029534355764596434, "tValue": 7.035883915873467, "pValue": 1.5544232567776817e-11 },
+      "ln科学技术水平": { "coefficient": 0.0005867112929687972, "stdError": 0.0011517249389013356, "tValue": 0.509419630635487, "pValue": 0.6108637214852539 },
+      "ln经济发展水平": { "coefficient": 0.07774617386559965, "stdError": 0.020792086580134393, "tValue": 3.739219417250865, "pValue": 0.00022428555627018731 },
+      "ln创业活力": { "coefficient": 0.004285925127259144, "stdError": 0.002603617303145468, "tValue": 1.6461425118358428, "pValue": 0.1008685104061291 },
+      "lnHEC": { "coefficient": -0.005737516807645425, "stdError": 0.0027345776821786636, "tValue": -2.098136339310095, "pValue": 0.03679887706765306 },
+      "lnindustry": { "coefficient": 0.004736243129036648, "stdError": 0.0034509160956325818, "tValue": 1.3724596593440082, "pValue": 0.17103064209638164 }
+    },
+    "summary": {
+      "Number of obs": 3336,
+      "Number of clusters (id)": 278,
+      "F(8, 277)": 11.049439720290824,
+      "R-squared": 0.8971778252210239,
+      "Adj R-squared": 0.8872000154974061,
+      "Within R-sq.": 0.1292686461805994,
+      "Root MSE": 0.022310576929980706,
+      "Std. error": "Std. err. adjusted for 278 clusters in id"
+    },
+    "tables": {
+      "effects": {
+        "columns": ["Absorbed FE", "Categories", "Redundant", "Num. Coefs", "Nested"],
+        "rows": [
+          { "Absorbed FE": "id", "Categories": 278, "Redundant": 278, "Num. Coefs": 0, "Nested": "*" },
+          { "Absorbed FE": "year", "Categories": 12, "Redundant": 1, "Num. Coefs": 11, "Nested": "" }
+        ]
+      }
+    },
+    "warningsInclude": ["* = FE nested within cluster; treated as redundant for DoF computation"]
+  },
+  "stataExpectedOutput": {
+    "summary": {
+      "Number of obs": 3336,
+      "Number of clusters (id)": 278,
+      "F(8, 277)": 13.21,
+      "Prob > F": 0,
+      "R-squared": 0.8974,
+      "Adj R-squared": 0.8874,
+      "Within R-sq.": 0.1311,
+      "Root MSE": 0.0223,
+      "Std. error": "Std. err. adjusted for 278 clusters in id"
+    },
+    "coefficients": {
+      "ln数字经济发展水平": { "coefficient": -0.0000651, "stdError": 0.0006981, "tValue": -0.09, "pValue": 0.926 },
+      "X": { "coefficient": -0.0266303, "stdError": 0.0038551, "tValue": -6.91, "pValue": 0 },
+      "X_square": { "coefficient": 0.0021531, "stdError": 0.000279, "tValue": 7.72, "pValue": 0 },
+      "ln科学技术水平": { "coefficient": 0.000534, "stdError": 0.0011501, "tValue": 0.46, "pValue": 0.643 },
+      "ln经济发展水平": { "coefficient": 0.0769924, "stdError": 0.019723, "tValue": 3.9, "pValue": 0 },
+      "ln创业活力": { "coefficient": 0.0043722, "stdError": 0.0024724, "tValue": 1.77, "pValue": 0.078 },
+      "lnHEC": { "coefficient": -0.0049863, "stdError": 0.0026814, "tValue": -1.86, "pValue": 0.064 },
+      "lnindustry": { "coefficient": 0.0048638, "stdError": 0.0036457, "tValue": 1.33, "pValue": 0.183 },
+      "_cons": { "coefficient": 0.5836332, "stdError": 0.2144692, "tValue": 2.72, "pValue": 0.007 }
+    },
+    "tables": {
+      "effects": {
+        "columns": ["Absorbed FE", "Categories", "Redundant", "Num. Coefs", "Nested"],
+        "rows": [
+          { "Absorbed FE": "id", "Categories": 278, "Redundant": 278, "Num. Coefs": 0, "Nested": "*" },
+          { "Absorbed FE": "year", "Categories": 12, "Redundant": 1, "Num. Coefs": 11, "Nested": "" }
+        ]
+      }
+    },
+    "warningsInclude": ["* = FE nested within cluster; treated as redundant for DoF computation"]
+  }
+}
