@@ -57,6 +57,7 @@ export type CustomPublicationSource = {
   label: string
   group?: string
   modelLabel?: string
+  modelShortName?: string
   modelName?: string
   formula?: string
   createdAt?: string

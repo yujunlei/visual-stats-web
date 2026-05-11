@@ -115,3 +115,27 @@ export type ModelPlugin = {
   fit(input: ModelFitInput): ModelResult
   exportCsv(result: ModelResult, config: ModelConfig): string
 }
+
+export type ModelPackId = 'core' | 'advanced' | 'experimental'
+
+export type ModelTaskGroup =
+  | '数据探索'
+  | '差异检验'
+  | '相关关系'
+  | '回归建模'
+  | '面板与固定效应'
+  | '机制检验'
+  | '空间与扩展模型'
+
+export type ModelMaturityLevel = 'stable' | 'preview' | 'experimental'
+
+export type ModelCatalogEntry = {
+  id: string
+  taskGroup: ModelTaskGroup
+  packId: ModelPackId
+  modelVersion: string
+  maturityLevel: ModelMaturityLevel
+  enabledByDefault: boolean
+  useCase: string
+  accuracyNotes: string
+}

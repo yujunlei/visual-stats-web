@@ -28,6 +28,7 @@ export type OlsFit = {
   sst: number
   dfModel: number
   dfResidual: number
+  inferenceDf: number
   dfTotal: number
   msModel: number
   mse: number
@@ -41,6 +42,14 @@ export type OlsFit = {
   clusterField?: string
   clusterCount?: number
   warnings: string[]
+}
+
+export type OlsFitOptions = {
+  includeIntercept?: boolean
+  dfResidualOverride?: number
+  dfModelOverride?: number
+  inferenceDfOverride?: number
+  robustUsesNormal?: boolean
 }
 
 export type LogitFit = {
@@ -148,17 +157,19 @@ const sandwichCovariance = (
   }
 }
 
-export const fitOls = (rows: Row[], target: string, features: string[], label = '模型', inference?: InferenceConfig) => {
+export const fitOls = (rows: Row[], target: string, features: string[], label = '模型', inference?: InferenceConfig, options: OlsFitOptions = {}) => {
   if (!target || features.length === 0) {
     throw new Error(`${label}需要选择一个因变量和至少一个自变量。`)
   }
 
   const cleanRows = cleanNumericRows(rows, target, features)
-  if (cleanRows.length <= features.length + 1) {
+  const includeIntercept = options.includeIntercept ?? true
+  const predictors = features.length + (includeIntercept ? 1 : 0)
+  if (cleanRows.length <= predictors) {
     throw new Error(`${label}可用观测太少，无法估计。`)
   }
 
-  const x = cleanRows.map((row) => [1, ...row.x])
+  const x = cleanRows.map((row) => (includeIntercept ? [1, ...row.x] : row.x))
   const y = cleanRows.map((row) => [row.y])
   const xt = transpose(x)
   const xtx = multiply(xt, x)
@@ -171,15 +182,12 @@ export const fitOls = (rows: Row[], target: string, features: string[], label = 
   const meanY = actual.reduce((sum, value) => sum + value, 0) / actual.length
   const sst = actual.reduce((sum, value) => sum + (value - meanY) ** 2, 0)
   const ssModel = Math.max(sst - sse, 0)
-  const dfModel = features.length
-  const predictors = features.length + 1
-  const dfResidual = cleanRows.length - predictors
+  const dfModel = options.dfModelOverride ?? features.length
+  const dfResidual = options.dfResidualOverride ?? cleanRows.length - predictors
   const dfTotal = cleanRows.length - 1
   const msModel = ssModel / Math.max(dfModel, 1)
   const mse = sse / dfResidual
   const msTotal = sst / dfTotal
-  const fValue = msModel / mse
-  const fPValue = 1 - jStat.centralF.cdf(fValue, dfModel, dfResidual)
   const covariance = xtxInverse.map((row) => row.map((value) => value * mse))
   const robustCovariance = sandwichCovariance(
     x,
@@ -190,13 +198,28 @@ export const fitOls = (rows: Row[], target: string, features: string[], label = 
     dfResidual,
   )
   const effectiveCovariance = robustCovariance.covariance ?? covariance
-  const useNormalInference = robustCovariance.standardError !== 'ols'
-  const tCritical = useNormalInference ? 1.96 : jStat.studentt.inv(0.975, dfResidual)
-  const featureNames = ['_cons', ...features]
+  const inferenceDf = options.inferenceDfOverride ?? (robustCovariance.clusterCount ? robustCovariance.clusterCount - 1 : dfResidual)
+  const testedIndexes = includeIntercept ? beta.slice(1).map((_, index) => index + 1) : beta.map((_, index) => index)
+  let fValue = msModel / mse
+
+  if (robustCovariance.covariance && testedIndexes.length > 0) {
+    try {
+      const testedBeta = testedIndexes.map((index) => [beta[index]])
+      const testedCovariance = testedIndexes.map((rowIndex) => testedIndexes.map((columnIndex) => effectiveCovariance[rowIndex][columnIndex]))
+      const wald = multiply(multiply(transpose(testedBeta), invert(testedCovariance)), testedBeta)[0][0]
+      fValue = wald / testedIndexes.length
+    } catch {
+      fValue = msModel / mse
+    }
+  }
+  const fPValue = 1 - jStat.centralF.cdf(fValue, Math.max(dfModel, 1), Math.max(inferenceDf, 1))
+  const useNormalInference = robustCovariance.standardError !== 'ols' && options.robustUsesNormal !== false
+  const tCritical = useNormalInference ? 1.96 : jStat.studentt.inv(0.975, inferenceDf)
+  const featureNames = includeIntercept ? ['_cons', ...features] : features
   const coefficients: RegressionCoefficient[] = featureNames.map((term, i) => {
     const stdError = Math.sqrt(Math.max(effectiveCovariance[i][i], 0))
     const tValue = stdError === 0 ? 0 : beta[i] / stdError
-    const pValue = useNormalInference ? normalPValue(tValue) : 2 * (1 - jStat.studentt.cdf(Math.abs(tValue), dfResidual))
+    const pValue = useNormalInference ? normalPValue(tValue) : 2 * (1 - jStat.studentt.cdf(Math.abs(tValue), inferenceDf))
     const coefficient = beta[i]
 
     return {
@@ -226,6 +249,7 @@ export const fitOls = (rows: Row[], target: string, features: string[], label = 
     sst,
     dfModel,
     dfResidual,
+    inferenceDf,
     dfTotal,
     msModel,
     mse,
@@ -248,14 +272,21 @@ const variance = (values: number[]) => {
   return values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1)
 }
 
-export const fitOlsDroppingCollinear = (rows: Row[], target: string, features: string[], label = '模型', inference?: InferenceConfig) => {
+export const fitOlsDroppingCollinear = (
+  rows: Row[],
+  target: string,
+  features: string[],
+  label = '模型',
+  inference?: InferenceConfig,
+  options: OlsFitOptions | ((activeFeatures: string[]) => OlsFitOptions) = {},
+) => {
   let activeFeatures = [...features]
   const droppedFeatures: string[] = []
 
   while (activeFeatures.length > 0) {
     try {
       return {
-        fit: fitOls(rows, target, activeFeatures, label, inference),
+        fit: fitOls(rows, target, activeFeatures, label, inference, typeof options === 'function' ? options(activeFeatures) : options),
         features: activeFeatures,
         droppedFeatures,
       }

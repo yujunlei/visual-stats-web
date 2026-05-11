@@ -1,0 +1,30 @@
+{
+  "id": "xtreg-fe-robust",
+  "pluginId": "xtreg-fixed-effects",
+  "stataCommand": "xtreg y x, fe vce(robust)",
+  "rows": [
+    { "entity": "A", "time": 1, "x": 1, "y": 12 },
+    { "entity": "A", "time": 2, "x": 2, "y": 14 },
+    { "entity": "A", "time": 3, "x": 3, "y": 16 },
+    { "entity": "B", "time": 1, "x": 1.5, "y": 0 },
+    { "entity": "B", "time": 2, "x": 2.5, "y": 2 },
+    { "entity": "B", "time": 3, "x": 3.5, "y": 4 },
+    { "entity": "C", "time": 1, "x": 2, "y": 9 },
+    { "entity": "C", "time": 2, "x": 3, "y": 11 },
+    { "entity": "C", "time": 3, "x": 4, "y": 13 }
+  ],
+  "config": { "target": "y", "features": ["entity", "x"], "params": { "target": "y", "panelId": "entity", "regressors": ["x"] } },
+  "inference": { "standardError": "robust", "clusterField": "" },
+  "expected": {
+    "coefficients": { "x": { "coefficient": 2 } },
+    "absentCoefficients": ["_cons"],
+    "summary": {
+      "Number of obs": 9,
+      "Number of groups": 3,
+      "Residual df": 5,
+      "Std. error": "Robust (cluster entity)",
+      "Stata command": "xtreg y x, fe i(entity) vce(robust)"
+    },
+    "finiteSummary": ["Within R2", "sigma_u", "sigma_e", "rho"]
+  }
+}

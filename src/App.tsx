@@ -26,7 +26,7 @@ import { type DataPrepConfig, type RunLogEntry } from './data/preprocess'
 import { profileRows, rowsFromSheet } from './data/tableUtils'
 import { buildBaselinePublicationTable, buildCustomPublicationTable, publicationTableToRows, type CustomPublicationSource, type PublicationTable } from './export/publicationTables'
 import type { ColumnType, Row, TypeOverrides } from './data/types'
-import { getModelPlugin, modelPlugins } from './models/registry'
+import { getModelMaturity, getModelPlugin, getModelTaskGroup, getModelUseCase, modelPlugins, modelTaskGroupOrder } from './models/registry'
 import type { InferenceConfig, ModelConfig, ModelParamValue, ModelPlugin, ModelResult, SpatialWeightsParam } from './models/types'
 import { formatMetricValue, columnLabels, formatResultValue } from './components/results/resultFormat'
 import { deriveResultInsights } from './components/results/resultInsights'
@@ -40,12 +40,6 @@ import {
   snapshotStorageKey,
 } from './constants/workbench'
 import './App.css'
-
-const stableMaturity: NonNullable<ModelPlugin['maturity']> = {
-  level: 'stable',
-  label: '正式',
-  description: '浏览器内结果可用于常规探索分析。',
-}
 
 const noModelPlugin: ModelPlugin = {
   id: '',
@@ -108,6 +102,7 @@ type WorkbenchSnapshot = {
   fieldCount: number
   modelId: string
   modelName: string
+  modelShortName?: string
   formula: string
   rows: Row[]
   dataRoles: DataRoles
@@ -357,74 +352,6 @@ const parameterSectionMeta: Record<ParameterSectionId, { title: string; descript
 const advancedParameterIds = new Set(['neighborKey', 'weightField', 'spatialWeights'])
 const slowModelIds = new Set(['mediation-analysis', 'moderated-mediation', 'reghdfe-regression', 'xtreg-fixed-effects'])
 
-const modelUseCases: Record<string, string> = {
-  'frequency-analysis': '查看分类、文本或时间字段的取值分布。',
-  'category-summary': '按组比较数值变量的均值、中位数和波动。',
-  'crosstab-chi-square': '检验两个分类变量是否存在关联。',
-  'variance-analysis': '查看数值变量整体或分组后的离散程度。',
-  'independent-t-test': '比较两个独立组的均值差异。',
-  'one-sample-t-test': '检验一个变量的均值是否不同于给定值。',
-  'paired-t-test': '比较同一对象前后或两列配对数据的均值差。',
-  'normality-test': '判断数值变量是否明显偏离正态分布。',
-  'nonparametric-test': '在分布偏态或不满足 t 检验假设时比较组间差异。',
-  'linear-regression': '估计一个因变量与多个解释变量之间的线性关系。',
-  'ordinary-regression': '快速执行多元 OLS 回归并查看系数显著性。',
-  'xtreg-fixed-effects': '控制面板个体固定效应，估计组内变化关系。',
-  'reghdfe-regression': '吸收多维固定效应，适合高维面板或分组数据。',
-  'mediation-analysis': '分析 X 是否通过中介变量 M 影响 Y。',
-  'moderation-analysis': '检验 W 是否改变 X 对 Y 的影响强度。',
-  'moderated-mediation': '检验中介效应是否随调节变量 W 改变。',
-  'spatial-sar': '估计相邻地区因变量的空间滞后影响。',
-  'spatial-slx': '估计解释变量的邻近空间溢出。',
-  'spatial-sdm': '同时估计 Wy 和 WX 的空间杜宾模型。',
-  'spatial-sem': '识别误差项中的空间相关。',
-  'spatial-sdem': '同时估计 WX 和误差空间相关。',
-  'spatial-sac': '同时估计因变量滞后和误差空间相关。',
-  'spatial-gns': '估计最完整的常见嵌套空间设定。',
-  'spatial-panel-sdm': '在面板固定效应下估计空间杜宾模型。',
-  'spatial-logit': '估计二分类结果的空间邻近影响。',
-  'threshold-regression': '寻找门槛变量导致关系结构变化的切点。',
-  'logit-regression': '估计二分类结果发生概率及 Odds Ratio。',
-  'descriptive-statistics': '批量查看数值变量的样本量、均值和范围。',
-  'correlation-analysis': '查看多个数值变量之间的 Pearson 相关关系。',
-}
-
-const modelCategoryOrder = ['数据探索', '关系分析', '差异检验', '基础回归', '面板与固定效应', '机制检验', '扩展模型']
-
-const modelCategoryOverrides: Record<string, string> = {
-  'frequency-analysis': '数据探索',
-  'category-summary': '数据探索',
-  'descriptive-statistics': '数据探索',
-  'variance-analysis': '数据探索',
-  'normality-test': '数据探索',
-  'correlation-analysis': '关系分析',
-  'crosstab-chi-square': '关系分析',
-  'independent-t-test': '差异检验',
-  'one-sample-t-test': '差异检验',
-  'paired-t-test': '差异检验',
-  'nonparametric-test': '差异检验',
-  'linear-regression': '基础回归',
-  'ordinary-regression': '基础回归',
-  'logit-regression': '基础回归',
-  'xtreg-fixed-effects': '面板与固定效应',
-  'reghdfe-regression': '面板与固定效应',
-  'mediation-analysis': '机制检验',
-  'moderation-analysis': '机制检验',
-  'moderated-mediation': '机制检验',
-  'spatial-sar': '扩展模型',
-  'spatial-slx': '扩展模型',
-  'spatial-sdm': '扩展模型',
-  'spatial-sem': '扩展模型',
-  'spatial-sdem': '扩展模型',
-  'spatial-sac': '扩展模型',
-  'spatial-gns': '扩展模型',
-  'spatial-panel-sdm': '扩展模型',
-  'spatial-logit': '扩展模型',
-  'threshold-regression': '扩展模型',
-}
-
-const getModelCategory = (plugin: ModelPlugin) => modelCategoryOverrides[plugin.id] ?? plugin.category
-
 const getParameterSectionId = (field: ParameterField): ParameterSectionId => {
   if (field.kind === 'number') return 'estimation'
   if (field.kind === 'file') return 'advanced'
@@ -507,8 +434,6 @@ const removeImplicitColumnDefaults = (
     features,
   }
 }
-
-const getModelUseCase = (plugin: ModelPlugin) => modelUseCases[plugin.id] ?? plugin.description
 
 const estimateRunDuration = (modelId: string, rowCount: number) => {
   const rowFactor = Math.min(5000, rowCount) / 5000
@@ -1001,7 +926,7 @@ function App() {
   const hasActiveModel = Boolean(activeModelId)
   const activeModel = activeModelId ? getModelPlugin(activeModelId) : noModelPlugin
   const draftModel = draftModelId ? getModelPlugin(draftModelId) : null
-  const modelMaturity = activeModel.maturity ?? stableMaturity
+  const modelMaturity = getModelMaturity(activeModel)
   const canImportData = hasActiveModel && !isModelRunning
   const hasDataset = rows.length > 0
   const profiles = useMemo(() => profileRows(rows, typeOverrides), [rows, typeOverrides])
@@ -1183,6 +1108,7 @@ function App() {
               config: sanitizedConfig,
               dimensions: dataRoles,
               modelName: activeModel.name,
+              modelShortName: activeModel.shortName || activeModel.name,
               formula: activeModel.getFormula(sanitizedConfig),
               createdAt: new Date().toISOString(),
             },
@@ -1197,6 +1123,7 @@ function App() {
         config: snapshot.modelConfig,
         dimensions: snapshot.dataRoles ?? emptyDataRoles,
         modelName: snapshot.modelName,
+        modelShortName: snapshot.modelShortName || getModelPlugin(snapshot.modelId).shortName || snapshot.modelName,
         formula: snapshot.formula,
         createdAt: snapshot.savedResultAt ?? snapshot.createdAt,
       }))
@@ -1335,7 +1262,7 @@ function App() {
   }, [customPublicationConfig, customPublicationTemplates])
   const modelOrder = useMemo(() => new Map(modelPlugins.map((plugin, index) => [plugin.id, index])), [])
   const modelCategories = useMemo(
-    () => [allModelCategory, ...modelCategoryOrder.filter((category) => modelPlugins.some((plugin) => getModelCategory(plugin) === category))],
+    () => [allModelCategory, ...modelTaskGroupOrder.filter((category) => modelPlugins.some((plugin) => getModelTaskGroup(plugin) === category))],
     [],
   )
   const filteredModelPlugins = useMemo(() => {
@@ -1343,10 +1270,10 @@ function App() {
     const categoryFiltered =
       selectedModelCategory === allModelCategory
         ? modelPlugins
-        : modelPlugins.filter((plugin) => getModelCategory(plugin) === selectedModelCategory)
+        : modelPlugins.filter((plugin) => getModelTaskGroup(plugin) === selectedModelCategory)
     const matched = query
       ? categoryFiltered.filter((plugin) =>
-          [plugin.name, plugin.shortName, plugin.fullName, getModelCategory(plugin), plugin.description, ...plugin.keywords]
+          [plugin.name, plugin.shortName, plugin.fullName, getModelTaskGroup(plugin), plugin.description, ...plugin.keywords]
             .join(' ')
             .toLowerCase()
             .includes(query),
@@ -1989,6 +1916,7 @@ function App() {
       fieldCount: profiles.length,
       modelId: activeModel.id,
       modelName: activeModel.name,
+      modelShortName: activeModel.shortName || activeModel.name,
       formula: activeModel.getFormula(sanitizedConfig),
       rows,
       dataRoles,
@@ -2311,7 +2239,9 @@ function App() {
           dimensions: source.dimensions,
           label: draft?.label || `(${index + 1})`,
           group: draft?.group?.trim() || undefined,
-          modelLabel: draft?.modelLabel?.trim() || source.modelName,
+          modelLabel: draft?.modelLabel?.trim() || source.modelShortName || source.modelName,
+          modelShortName: source.modelShortName,
+          modelName: source.modelName,
         }
       })
 
@@ -3765,7 +3695,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                       id: source.id,
                       label: `(${sourceIndex + 1})`,
                       group: '',
-                      modelLabel: source.modelName,
+                      modelLabel: source.modelShortName || source.modelName,
                     }
                     const selectedIndex = selectedPublicationSources.findIndex((entry) => entry.id === source.id)
                     return (
@@ -4330,7 +4260,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                     <div>
                       <span>当前模型</span>
                       <strong>{hasActiveModel ? activeModel.name : '尚未选择模型'}</strong>
-                      <small>{hasActiveModel ? `${activeModel.shortName || activeModel.methodLabel} · ${getModelCategory(activeModel)}` : '请先在模型库中选择并应用模型'}</small>
+                      <small>{hasActiveModel ? `${activeModel.shortName || activeModel.methodLabel} · ${getModelTaskGroup(activeModel)}` : '请先在模型库中选择并应用模型'}</small>
                     </div>
                     {hasActiveModel ? <em>已选择</em> : null}
                     <button
@@ -4442,7 +4372,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
             {hasActiveModel ? (
               <>
                 <div className="active-model-card__header">
-                  <span>{getModelCategory(activeModel)}</span>
+                  <span>{getModelTaskGroup(activeModel)}</span>
                   <em className="model-status-badge">已选择</em>
                   <button className="secondary-button is-subtle" type="button" onClick={openModelLibrary} disabled={isModelRunning}>
                     切换模型
@@ -4454,7 +4384,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                   <span>{modelMaturity.description}</span>
                 </div>
                 <div className="model-identity">
-                  <span>{getModelCategory(activeModel)}</span>
+                  <span>{getModelTaskGroup(activeModel)}</span>
                   <code>{activeFormula}</code>
                 </div>
               </>
@@ -4580,23 +4510,28 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
               ) : null}
 
               <div className="model-library-grid">
-                {filteredModelPlugins.map((plugin) => (
-                  <button
-                    className={`model-library-card ${plugin.id === activeModelId ? 'is-current' : ''} ${plugin.id === draftModel?.id ? 'is-draft' : ''}`}
-                    type="button"
-                    key={plugin.id}
-                    onClick={() => setDraftModelId(plugin.id)}
-                  >
-                    <span>{getModelCategory(plugin)}</span>
-                    {plugin.id === activeModelId ? <em className="model-library-card__status">当前使用</em> : null}
-                    {plugin.id === draftModel?.id && plugin.id !== activeModelId ? <em className="model-library-card__status">待应用</em> : null}
-                    <strong>
-                      {plugin.name}（{plugin.shortName}）
-                    </strong>
-                    <small>{plugin.fullName}</small>
-                    <p>{getModelUseCase(plugin)}</p>
-                  </button>
-                ))}
+                {filteredModelPlugins.map((plugin) => {
+                  const maturity = getModelMaturity(plugin)
+
+                  return (
+                    <button
+                      className={`model-library-card ${plugin.id === activeModelId ? 'is-current' : ''} ${plugin.id === draftModel?.id ? 'is-draft' : ''}`}
+                      type="button"
+                      key={plugin.id}
+                      onClick={() => setDraftModelId(plugin.id)}
+                    >
+                      <span>{getModelTaskGroup(plugin)}</span>
+                      <em className={`model-maturity-badge is-${maturity.level}`}>{maturity.label}</em>
+                      {plugin.id === activeModelId ? <em className="model-library-card__status">当前使用</em> : null}
+                      {plugin.id === draftModel?.id && plugin.id !== activeModelId ? <em className="model-library-card__status">待应用</em> : null}
+                      <strong>
+                        {plugin.name}（{plugin.shortName}）
+                      </strong>
+                      <small>{plugin.fullName}</small>
+                      <p>{getModelUseCase(plugin)}</p>
+                    </button>
+                  )
+                })}
                 {filteredModelPlugins.length === 0 ? <div className="empty-history">没有匹配的模型插件。</div> : null}
               </div>
             </div>

@@ -1,0 +1,29 @@
+{
+  "id": "reghdfe-singletons",
+  "pluginId": "reghdfe-regression",
+  "stataCommand": "reghdfe y x, absorb(entity year)",
+  "rows": [
+    { "entity": "A", "year": "2020", "x": 2, "y": 8 },
+    { "entity": "A", "year": "2021", "x": 3, "y": 7 },
+    { "entity": "A", "year": "2022", "x": 4, "y": 13 },
+    { "entity": "B", "year": "2020", "x": 4, "y": 5 },
+    { "entity": "B", "year": "2021", "x": 6, "y": 5.5 },
+    { "entity": "B", "year": "2022", "x": 8, "y": 13 },
+    { "entity": "C", "year": "2020", "x": 6, "y": 17 },
+    { "entity": "C", "year": "2021", "x": 9, "y": 19 },
+    { "entity": "C", "year": "2022", "x": 12, "y": 28 },
+    { "entity": "D", "year": "2023", "x": 20, "y": 100 }
+  ],
+  "config": { "target": "y", "features": ["entity", "year", "x"], "params": { "target": "y", "fixedEffects": ["entity", "year"], "regressors": ["x"] } },
+  "expected": {
+    "coefficients": { "x": { "coefficient": 1.5 } },
+    "absentCoefficients": ["_cons"],
+    "summary": {
+      "Number of obs": 9,
+      "Dropped singleton obs": 1,
+      "Stata command": "reghdfe y x, absorb(entity year)"
+    },
+    "finiteSummary": ["Within R2", "Root MSE"],
+    "warningsInclude": ["递归删除 1 条 singleton"]
+  }
+}

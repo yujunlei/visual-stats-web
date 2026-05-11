@@ -1,12 +1,26 @@
 import { csvSummarySection, csvTableSection } from '../shared/csv'
+import { toNumber } from '../../data/tableUtils'
 import { compactConfig, paramArray, paramString } from '../shared/config'
-import { absorbFixedEffects } from '../shared/fixedEffects'
+import { absorbFixedEffects, formatXtregCommand } from '../shared/fixedEffects'
 import { createResidualDiagnosticsTable, createRobustnessTable } from '../shared/postEstimation'
 import { fitOlsDroppingCollinear, olsCoefficientColumns } from '../shared/regression'
-import type { ModelPlugin, ModelResult } from '../types'
+import type { InferenceConfig, ModelPlugin, ModelResult } from '../types'
 
 const effectColumns = ['effect', 'groups', 'singletonGroups', 'minObs', 'maxObs', 'avgObs', 'absorbedDf']
 const droppedColumns = ['variable', 'reason']
+
+const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
+
+const squaredCorrelation = (left: number[], right: number[]) => {
+  if (left.length !== right.length || left.length === 0) return 0
+  const leftMean = mean(left)
+  const rightMean = mean(right)
+  const numerator = left.reduce((sum, value, index) => sum + (value - leftMean) * (right[index] - rightMean), 0)
+  const leftSst = left.reduce((sum, value) => sum + (value - leftMean) ** 2, 0)
+  const rightSst = right.reduce((sum, value) => sum + (value - rightMean) ** 2, 0)
+  if (leftSst === 0 || rightSst === 0) return 0
+  return (numerator ** 2) / (leftSst * rightSst)
+}
 
 export const xtregFixedEffectsPlugin: ModelPlugin = {
   id: 'xtreg-fixed-effects',
@@ -21,11 +35,11 @@ export const xtregFixedEffectsPlugin: ModelPlugin = {
   category: '面板模型',
   keywords: ['xtreg', 'fe', 'fixed effects', 'panel', '面板', '固定效应', '组内估计'],
   maturity: {
-    level: 'preview',
-    label: '预览',
-    description: '已支持组内固定效应估计、聚类稳健标准误和固定效应摘要。',
+    level: 'stable',
+    label: '稳定',
+    description: '已支持组内固定效应估计、普通/稳健/聚类标准误和固定效应摘要。',
   },
-  limitations: ['xtreg 当前尚未实现随机效应、Hausman 检验和完整面板后估计命令。'],
+  limitations: ['xtreg 当前支持固定效应组内估计；随机效应、Hausman 检验和完整面板后估计命令不在本模型内。'],
   requiresTarget: true,
   targetLabel: '因变量 Y',
   featuresLabel: 'Panel ID、解释变量 X',
@@ -66,7 +80,7 @@ export const xtregFixedEffectsPlugin: ModelPlugin = {
   getFormula(config) {
     const panelId = paramString(config, 'panelId', config.features[0] ?? 'id')
     const regressors = paramArray(config, 'regressors', config.features.slice(1))
-    return `xtreg ${config.target || 'y'} ${regressors.join(' ') || 'x'}, fe i(${panelId})`
+    return formatXtregCommand(config.target, regressors, panelId)
   },
 
   getSettings(config) {
@@ -85,30 +99,106 @@ export const xtregFixedEffectsPlugin: ModelPlugin = {
       throw new Error('xtreg 需要选择 Y、Panel ID 和至少一个解释变量。')
     }
 
+    const effectiveInference: InferenceConfig | undefined =
+      inference?.standardError === 'robust'
+        ? { standardError: 'cluster', clusterField: panelId }
+        : inference
+    const preserveColumns = Array.from(
+      new Set([
+        ...(inference?.standardError === 'robust' ? [panelId] : []),
+        ...(inference?.standardError === 'cluster' && inference.clusterField ? [inference.clusterField] : []),
+      ]),
+    )
     const absorbed = absorbFixedEffects({
       rows,
       target: config.target,
       regressors,
       fixedEffects: [panelId],
       prefix: 'within',
-      preserveColumns: inference?.standardError === 'cluster' && inference.clusterField ? [inference.clusterField] : [],
+      preserveColumns,
     })
-    const { fit, droppedFeatures } = fitOlsDroppingCollinear(absorbed.rows, absorbed.target, absorbed.features, this.name, inference)
+    const groupCount = absorbed.groups[0]?.groups ?? 0
+    const fitOptions = (activeFeatures: string[]) => ({
+      includeIntercept: false,
+      dfResidualOverride: absorbed.observations - groupCount - activeFeatures.length,
+      inferenceDfOverride: effectiveInference?.standardError === 'cluster' ? Math.max(groupCount - 1, 1) : undefined,
+      robustUsesNormal: false,
+    })
+    const { fit, droppedFeatures } = fitOlsDroppingCollinear(absorbed.rows, absorbed.target, absorbed.features, this.name, effectiveInference, fitOptions)
     const residualDiagnosticsTable = createResidualDiagnosticsTable(absorbed.rows, absorbed.target, absorbed.features, fit)
     const robustnessTable = createRobustnessTable(absorbed.rows, { target: absorbed.target, features: absorbed.features }, undefined, inference)
+    const coefficientRows = fit.coefficients
+      .filter((row) => row.term !== '_cons')
+      .map((row) => ({
+        ...row,
+        term: regressors[absorbed.features.indexOf(row.term)] ?? row.term,
+      }))
+    const singletonGroups = absorbed.groups[0]?.singletonGroups ?? 0
+    const groupSummary = absorbed.groups[0]
+    const coefficientByFeature = new Map(fit.featureNames.map((feature, index) => [feature, fit.beta[index]]))
+    const cleanRows = rows.flatMap((row) => {
+      const y = toNumber(row[config.target])
+      const x = regressors.map((regressor) => toNumber(row[regressor]))
+      const panel = String(row[panelId] ?? '')
+      if (y === null || x.some((value) => value === null) || !panel) return []
+      const numericX = x as number[]
+      const xb = absorbed.features.reduce((sum, transformedFeature, index) => sum + (coefficientByFeature.get(transformedFeature) ?? 0) * numericX[index], 0)
+      return [{ panel, y, xb }]
+    })
+    const overallR2 = squaredCorrelation(
+      cleanRows.map((row) => row.y),
+      cleanRows.map((row) => row.xb),
+    )
+    const panelMeans = Array.from(
+      cleanRows.reduce((groups, row) => {
+        const entry = groups.get(row.panel) ?? { y: [] as number[], xb: [] as number[] }
+        entry.y.push(row.y)
+        entry.xb.push(row.xb)
+        groups.set(row.panel, entry)
+        return groups
+      }, new Map<string, { y: number[]; xb: number[] }>()),
+    ).map(([, entry]) => ({ y: mean(entry.y), xb: mean(entry.xb) }))
+    const betweenR2 = squaredCorrelation(
+      panelMeans.map((row) => row.y),
+      panelMeans.map((row) => row.xb),
+    )
+    const sigmaE = fit.rootMse
+    const panelEffects = panelMeans.map((row) => row.y - row.xb)
+    const sigmaU = panelEffects.length > 1 ? Math.sqrt(Math.max(panelEffects.reduce((sum, value) => sum + (value - mean(panelEffects)) ** 2, 0) / (panelEffects.length - 1), 0)) : 0
+    const rho = sigmaU ** 2 + sigmaE ** 2 === 0 ? 0 : sigmaU ** 2 / (sigmaU ** 2 + sigmaE ** 2)
+    const corrUiXb = panelEffects.length > 1 ? Math.sign(panelEffects.reduce((sum, value, index) => sum + (value - mean(panelEffects)) * (panelMeans[index].xb - mean(panelMeans.map((row) => row.xb))), 0)) * Math.sqrt(betweenR2) : 0
+    const warnings = [
+      ...fit.warnings,
+      ...(singletonGroups > 0 ? [`Panel ID 中存在 ${singletonGroups} 个 singleton 组；当前保留这些观测并在组内变换后参与估计。`] : []),
+      ...(!absorbed.converged ? [`固定效应吸收在 ${absorbed.iterations} 次迭代后仍未达到默认收敛阈值。`] : []),
+    ]
 
     return {
       id: this.id,
       summary: [
         { label: 'Number of obs', value: absorbed.observations },
-        { label: 'Number of groups', value: absorbed.groups[0]?.groups ?? 0 },
-        { label: 'Singleton groups', value: absorbed.groups[0]?.singletonGroups ?? 0 },
+        { label: 'Number of groups', value: groupCount },
+        { label: 'Obs per group min', value: groupSummary?.minObs ?? 0 },
+        { label: 'Obs per group avg', value: groupSummary?.avgObs ?? 0 },
+        { label: 'Obs per group max', value: groupSummary?.maxObs ?? 0 },
+        { label: 'Singleton groups', value: singletonGroups },
         { label: 'Absorbed df', value: absorbed.absorbedDf },
-        { label: 'F statistic', value: fit.fValue },
+        { label: 'Residual df', value: fit.dfResidual },
+        { label: 'FE iterations', value: absorbed.iterations },
+        { label: 'FE converged', value: absorbed.converged ? 'Yes' : 'No' },
+        { label: 'FE max delta', value: absorbed.maxDelta },
+        { label: `F(${fit.dfModel}, ${fit.inferenceDf})`, value: fit.fValue },
         { label: 'Prob > F', value: fit.fPValue },
         { label: 'Within R2', value: fit.r2 },
+        { label: 'Between R2', value: betweenR2 },
+        { label: 'Overall R2', value: overallR2 },
+        { label: 'corr(u_i, Xb)', value: corrUiXb },
+        { label: 'sigma_u', value: sigmaU },
+        { label: 'sigma_e', value: sigmaE },
+        { label: 'rho', value: rho },
         { label: 'Root MSE', value: fit.rootMse },
-        { label: 'Std. error', value: fit.standardError === 'cluster' ? `Cluster ${fit.clusterField}` : fit.standardError },
+        { label: 'Std. error', value: inference?.standardError === 'robust' ? `Robust (cluster ${panelId})` : fit.standardError === 'cluster' ? `Cluster ${fit.clusterField}` : fit.standardError },
+        { label: 'Stata command', value: formatXtregCommand(config.target, regressors, panelId, inference) },
       ],
       tables: [
         {
@@ -131,10 +221,7 @@ export const xtregFixedEffectsPlugin: ModelPlugin = {
           id: 'coefficients',
           title: `xtreg, fe 系数 (${config.target})`,
           columns: olsCoefficientColumns,
-          rows: fit.coefficients.map((row) => ({
-            ...row,
-            term: regressors[absorbed.features.indexOf(row.term)] ?? row.term,
-          })),
+          rows: coefficientRows,
         },
         residualDiagnosticsTable,
         ...(robustnessTable ? [robustnessTable] : []),
@@ -148,10 +235,10 @@ export const xtregFixedEffectsPlugin: ModelPlugin = {
           fitted: fit.fitted,
         },
       ],
-      warnings: fit.warnings,
+      warnings,
       message: `xtreg 当前采用组内去均值固定效应估计；${
         droppedFeatures.length > 0 ? `已自动剔除共线变量：${droppedFeatures.join(', ')}。` : ''
-      }已输出固定效应组结构和吸收自由度。`,
+      }固定效应模型不报告普通截距项，系数表仅展示组内变换后的解释变量。`,
     } satisfies ModelResult
   },
 
