@@ -22,7 +22,7 @@ export function deriveResultInsights(result: ModelResult | null): string[] {
     const sigLevel = pValue < 0.001 ? '在 0.1% 水平高度显著' : pValue < 0.01 ? '在 1% 水平显著' : pValue < 0.05 ? '在 5% 水平显著' : pValue < 0.1 ? '在 10% 水平边际显著' : '未达到常用显著性阈值'
     insights.push(`整体模型检验 ${sigLevel}（p = ${formatResultValue(pValue, 'pValue')}）。`)
   }
-  const nObs = extractMetricNumber(result, 'N') ?? extractMetricNumber(result, 'Observations')
+  const nObs = extractMetricNumber(result, 'N') ?? extractMetricNumber(result, 'Observations') ?? extractMetricNumber(result, 'Number of obs')
   if (nObs !== null) {
     insights.push(`共纳入 ${formatNumber(nObs, 0)} 个有效观测进入估计。`)
   }

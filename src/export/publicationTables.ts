@@ -291,7 +291,7 @@ export const buildCustomPublicationTable = ({
   const metricFor = (source: CustomPublicationSource, label: string) => metricNumber(source.result, label)
   const hasGroups = columnSources.some((source) => source.group)
   const groupValues = columnSources.map((source) => source.group || '')
-  const modelValues = columnSources.map((source) => source.modelLabel || '')
+  const modelValues = columnSources.map((source) => source.modelLabel || source.modelShortName || source.modelName || '')
   const statisticRows: PublicationRow[] = []
 
   const enabledStatisticIdSet = new Set(

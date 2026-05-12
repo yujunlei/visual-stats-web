@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import Papa from 'papaparse'
-import { readSheet } from 'read-excel-file/browser'
-import writeXlsxFile, { type Cell, type Sheet, type SheetData } from 'write-excel-file/browser'
+import { useMemo, useState } from 'react'
+import writeXlsxFile from 'write-excel-file/browser'
 import {
   Activity,
   AlertTriangle,
@@ -22,131 +20,43 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { type DataPrepConfig, type RunLogEntry } from './data/preprocess'
-import { profileRows, rowsFromSheet } from './data/tableUtils'
-import { buildBaselinePublicationTable, buildCustomPublicationTable, publicationTableToRows, type CustomPublicationSource, type PublicationTable } from './export/publicationTables'
-import type { ColumnType, Row, TypeOverrides } from './data/types'
-import { getModelMaturity, getModelPlugin, getModelTaskGroup, getModelUseCase, modelPlugins, modelTaskGroupOrder } from './models/registry'
-import type { InferenceConfig, ModelConfig, ModelParamValue, ModelPlugin, ModelResult, SpatialWeightsParam } from './models/types'
-import { formatMetricValue, columnLabels, formatResultValue } from './components/results/resultFormat'
+import {
+  fieldRoleLabel,
+  fieldRoleValue,
+  hasField,
+  summarizeFields,
+} from './data/dataRoles'
+import {
+  snapshotFilterOptions,
+} from './data/snapshots'
+import { isMissingCell } from './data/missingValues'
+import { buildPublicationTableHtml, publicationSheetData, publicationTableCss } from './export/publicationRenderers'
+import { publicationTableToRows } from './export/publicationTables'
+import { buildCsvReport, buildExcelBlob, buildHtmlReport, buildJsonReport, csvLine } from './export/reportExport'
+import type { ColumnType, Row } from './data/types'
+import type { ParameterField } from './models/modelConfig'
+import { getModelMaturity, getModelPlugin, getModelTaskGroup, getModelUseCase } from './models/registry'
+import type { InferenceConfig, ModelParamValue, SpatialWeightsParam } from './models/types'
+import { formatDuration } from './workers/runProgress'
+import type { WorkflowStep } from './hooks/useModelRun'
+import { usePublicationWorkbench } from './hooks/usePublicationWorkbench'
+import { useWorkbenchSession } from './hooks/useWorkbenchSession'
 import { deriveResultInsights } from './components/results/resultInsights'
 import { ResultReadingPanel } from './components/results'
+import { CustomPublicationExportSummary, CustomPublicationWorkbench } from './components/report'
 import {
   allModelCategory,
   dataPreviewOverscanRows,
   dataPreviewRowHeight,
   dataPreviewVisibleRows,
-  modelUsageStorageKey,
-  snapshotStorageKey,
 } from './constants/workbench'
 import './App.css'
-
-const noModelPlugin: ModelPlugin = {
-  id: '',
-  name: '尚未选择模型',
-  nodeLabel: '尚未选择模型',
-  panelLabel: 'No model selected',
-  resultLabel: '结果',
-  description: '请先从模型库选择并应用一个分析模型。',
-  methodLabel: '',
-  shortName: '',
-  fullName: 'No model selected',
-  category: '未选择',
-  keywords: [],
-  requiresTarget: false,
-  targetLabel: '因变量 Y',
-  featuresLabel: '自变量 X',
-  downloadName: 'visual-stats-report.csv',
-  supportsCategoricalFeatures: false,
-  supportsInference: false,
-  getDefaultConfig: () => ({ target: '', features: [], params: {} }),
-  sanitizeConfig: () => ({ target: '', features: [], params: {} }),
-  getFormula: () => '尚未完成变量设定',
-  getSettings: () => [],
-  fit: () => {
-    throw new Error('请先选择模型。')
-  },
-  exportCsv: () => '',
-}
 
 const typeOptions: ColumnType[] = ['numeric', 'category', 'date', 'text', 'empty']
 
 const previewValue = (value: Row[string]) => {
   if (value === null || value === undefined || value === '') return 'NA'
   return String(value)
-}
-
-const csvCell = (value: string | number | null | undefined) => {
-  if (value === null || value === undefined) return ''
-  const text = String(value)
-  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
-}
-
-const csvLine = (values: Array<string | number | null | undefined>) => values.map(csvCell).join(',')
-
-const escapeXml = (value: string | number) =>
-  String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-
-type WorkbenchSnapshot = {
-  id: string
-  createdAt: string
-  updatedAt?: string
-  label: string
-  fileName: string
-  rowCount: number
-  fieldCount: number
-  modelId: string
-  modelName: string
-  modelShortName?: string
-  formula: string
-  rows: Row[]
-  dataRoles: DataRoles
-  typeOverrides: TypeOverrides
-  prepConfig: DataPrepConfig
-  inferenceConfig: InferenceConfig
-  modelConfig: ModelConfig
-  result?: ModelResult
-  resultLogs?: RunLogEntry[]
-  savedResultAt?: string
-  favorite?: boolean
-  pinned?: boolean
-  tags?: string[]
-}
-
-type RunState = {
-  result: ModelResult | null
-  error: string
-  logs: RunLogEntry[]
-  signature: string
-}
-
-type ValidationIssue = {
-  level: 'error' | 'warning'
-  message: string
-}
-
-type RunTaskStatus = 'preparing' | 'estimating' | 'finalizing' | 'completed' | 'cancelled' | 'failed'
-
-type RunTask = {
-  id: string
-  modelName: string
-  status: RunTaskStatus
-  phase: string
-  progress: number
-  startedAt: number
-  elapsedMs: number
-  estimatedMs: number
-}
-
-type RunFailureDialog = {
-  message: string
-  modelName: string
-  formula: string
 }
 
 type WorkspaceTab = 'workbench' | 'publication'
@@ -160,68 +70,6 @@ type ExportItem = {
   kind: 'summary' | 'table' | 'report' | 'meta'
 }
 
-type CustomPublicationColumnDraft = {
-  id: string
-  label: string
-  group: string
-  modelLabel: string
-}
-
-type CustomPublicationFormatRules = {
-  coefficientDigits: number
-  statisticDigits: number
-  nDigits: number
-  r2Digits: number
-  parenthesisMode: 't' | 'z' | 'stdError'
-  starLevels: {
-    one: number
-    two: number
-    three: number
-  }
-  missingDisplay: '' | '-' | '/'
-  booleanDisplay: 'yes-no' | 'yes-blank' | 'check'
-}
-
-type CustomPublicationMode = 'current-three-line' | 'custom'
-
-type CustomPublicationConfig = {
-  mode: CustomPublicationMode
-  title: string
-  note: string
-  selectedSourceIds: string[]
-  columns: Record<string, CustomPublicationColumnDraft>
-  columnOrder: string[]
-  variableOrder: string[]
-  variableLabels: Record<string, string>
-  hiddenVariableIds: string[]
-  statisticOrder: string[]
-  statisticLabels: Record<string, string>
-  disabledStatisticIds: string[]
-  formatRules: CustomPublicationFormatRules
-}
-
-type CustomPublicationTemplate = {
-  id: string
-  name: string
-  updatedAt: string
-  config: CustomPublicationConfig
-}
-
-type CustomPublicationDragItem = {
-  kind: 'column' | 'variable' | 'statistic'
-  id: string
-}
-
-type WorkflowStep = 'model' | 'upload' | 'roles' | 'variables' | 'run' | 'results'
-type SnapshotViewFilter = 'recent' | 'pinned' | 'favorite' | 'all'
-
-const snapshotFilterOptions: Array<{ id: SnapshotViewFilter; label: string }> = [
-  { id: 'recent', label: '最近' },
-  { id: 'pinned', label: '置顶' },
-  { id: 'favorite', label: '收藏' },
-  { id: 'all', label: '全部' },
-]
-
 declare global {
   interface Window {
     visualStatsDesktop?: {
@@ -234,383 +82,6 @@ declare global {
   }
 }
 
-type ModelWorkerMessage =
-  | {
-      type: 'progress'
-      taskId: string
-      status: Extract<RunTaskStatus, 'preparing' | 'estimating' | 'finalizing'>
-      phase: string
-      progress: number
-    }
-  | {
-      type: 'success'
-      taskId: string
-      result: ModelResult
-      logs: RunLogEntry[]
-    }
-  | {
-      type: 'error'
-      taskId: string
-      error: string
-    }
-
-type DataRoles = {
-  idFields: string[]
-  timeField: string
-  groupFields: string[]
-}
-
-type PendingImport = {
-  fileName: string
-  rows: Row[]
-  roles: DataRoles
-}
-
-type MissingValueAlert = {
-  fileName: string
-  rows: Row[]
-  missingCells: number
-  affectedRows: number
-  fields: Array<{ name: string; missing: number }>
-}
-
-type PanelBalanceDiagnosis = {
-  status: 'not-configured' | 'balanced' | 'unbalanced'
-  title: string
-  summary: string
-  idCount: number
-  timeCount: number
-  expectedObservations: number
-  actualObservations: number
-  missingCombinations: number
-  duplicateCombinations: number
-  missingIdRows: number
-  missingTimeRows: number
-  examples: string[]
-}
-
-const emptyDataRoles: DataRoles = {
-  idFields: [],
-  timeField: '',
-  groupFields: [],
-}
-
-const isMissingCell = (value: Row[string]) => value === null || value === undefined || value === ''
-
-const summarizeMissingValues = (rows: Row[], fileName: string): MissingValueAlert | null => {
-  const fields = [...new Set(rows.flatMap((row) => Object.keys(row)))]
-  const fieldCounts = new Map<string, number>()
-  let missingCells = 0
-  let affectedRows = 0
-
-  rows.forEach((row) => {
-    let rowHasMissing = false
-
-    fields.forEach((field) => {
-      if (!isMissingCell(row[field])) return
-
-      rowHasMissing = true
-      missingCells += 1
-      fieldCounts.set(field, (fieldCounts.get(field) ?? 0) + 1)
-    })
-
-    if (rowHasMissing) affectedRows += 1
-  })
-
-  if (missingCells === 0) return null
-
-  return {
-    fileName,
-    rows,
-    missingCells,
-    affectedRows,
-    fields: [...fieldCounts.entries()]
-      .map(([name, missing]) => ({ name, missing }))
-      .sort((left, right) => right.missing - left.missing || left.name.localeCompare(right.name)),
-  }
-}
-
-type ParameterField = NonNullable<ModelPlugin['parameterSchema']>[number]
-type ParameterSectionId = 'fields' | 'estimation' | 'advanced'
-type ModelUsageMap = Record<string, { usedCount: number; lastUsedAt: string }>
-
-const parameterSectionMeta: Record<ParameterSectionId, { title: string; description: string }> = {
-  fields: {
-    title: '模型字段',
-    description: '选择当前方法需要使用的数据列。',
-  },
-  estimation: {
-    title: '估计设置',
-    description: '控制检验值、迭代次数或 Bootstrap 等计算参数。',
-  },
-  advanced: {
-    title: '高级选项',
-    description: '设置权重、邻接关系或模型特有的扩展参数。',
-  },
-}
-
-const advancedParameterIds = new Set(['neighborKey', 'weightField', 'spatialWeights'])
-const slowModelIds = new Set(['mediation-analysis', 'moderated-mediation', 'reghdfe-regression', 'xtreg-fixed-effects'])
-
-const getParameterSectionId = (field: ParameterField): ParameterSectionId => {
-  if (field.kind === 'number') return 'estimation'
-  if (field.kind === 'file') return 'advanced'
-  if (advancedParameterIds.has(field.id)) return 'advanced'
-  return 'fields'
-}
-
-const selectedParamValues = (config: ModelConfig, field: ParameterField) => {
-  const value = config.params?.[field.id]
-  if (field.kind === 'number') return []
-  if (field.kind === 'file') return []
-  if (Array.isArray(value)) return value.filter(Boolean)
-  return typeof value === 'string' && value ? [value] : []
-}
-
-const createEmptyModelConfig = (plugin: ModelPlugin | null): ModelConfig => {
-  const params: Record<string, ModelParamValue> = {}
-
-  plugin?.parameterSchema?.forEach((field) => {
-    if (field.kind === 'number') {
-      params[field.id] = field.defaultValue ?? 0
-    } else if (field.kind === 'columns') {
-      params[field.id] = []
-    } else {
-      params[field.id] = ''
-    }
-  })
-
-  return { target: '', features: [], params }
-}
-
-const removeImplicitColumnDefaults = (
-  plugin: ModelPlugin,
-  sourceConfig: ModelConfig,
-  sanitizedConfig: ModelConfig,
-  featureColumns: string[],
-  targetColumns: string[],
-): ModelConfig => {
-  if (!plugin.parameterSchema) {
-    return {
-      ...sanitizedConfig,
-      target: sourceConfig.target ? sanitizedConfig.target : '',
-      features: sourceConfig.features.length > 0 ? sanitizedConfig.features : [],
-    }
-  }
-
-  const params: Record<string, ModelParamValue> = { ...(sanitizedConfig.params ?? {}) }
-
-  plugin.parameterSchema.forEach((field) => {
-    if (field.kind === 'number') return
-
-    const sourceValue = sourceConfig.params?.[field.id]
-    const allowedColumns = field.role === 'target' ? targetColumns : featureColumns
-
-    if (field.kind === 'columns') {
-      params[field.id] = Array.isArray(sourceValue) ? sourceValue.filter((value) => allowedColumns.includes(value)) : []
-      return
-    }
-
-    if (field.kind === 'column') {
-      params[field.id] = typeof sourceValue === 'string' && allowedColumns.includes(sourceValue) ? sourceValue : ''
-      return
-    }
-
-    params[field.id] = sourceValue ?? ''
-  })
-
-  const target = typeof params.target === 'string' ? params.target : ''
-  const explicitFeatureFields = new Set(
-    plugin.parameterSchema
-      .filter((field) => field.kind !== 'number' && field.kind !== 'file' && field.role === 'feature')
-      .flatMap((field) => selectedParamValues({ ...sanitizedConfig, params }, field)),
-  )
-  const features = sanitizedConfig.features.filter((field) => explicitFeatureFields.has(field) && field !== target)
-
-  return {
-    ...sanitizedConfig,
-    params,
-    target,
-    features,
-  }
-}
-
-const estimateRunDuration = (modelId: string, rowCount: number) => {
-  const rowFactor = Math.min(5000, rowCount) / 5000
-  if (slowModelIds.has(modelId) || modelId.startsWith('spatial-')) return Math.round(4200 + rowFactor * 3600)
-  if (rowCount > 5000) return 3000
-  return 1800
-}
-
-const formatDuration = (ms: number) => {
-  const seconds = Math.max(0, Math.ceil(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
-}
-
-const customPublicationTemplateStorageKey = 'visual-stats-lab:custom-publication-templates'
-const customPublicationDefaultTemplateStorageKey = 'visual-stats-lab:custom-publication-default-template'
-const customPublicationDraftStorageKey = 'visual-stats-lab:custom-publication-draft'
-
-const formatPublicationThreshold = (value: number) => {
-  const normalized = Number(value.toFixed(3))
-  return normalized.toString()
-}
-
-const parenthesisModeLabel = (mode: CustomPublicationFormatRules['parenthesisMode']) => {
-  if (mode === 'stdError') return '标准误'
-  if (mode === 'z') return 'z 值'
-  return 't 值'
-}
-
-const buildCustomPublicationNote = (formatRules: CustomPublicationFormatRules) =>
-  `注：稳健标准误；括号内为 ${parenthesisModeLabel(formatRules.parenthesisMode)}；* p<${formatPublicationThreshold(formatRules.starLevels.one)}，** p<${formatPublicationThreshold(
-    formatRules.starLevels.two,
-  )}，*** p<${formatPublicationThreshold(formatRules.starLevels.three)}。`
-
-const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => ({
-  coefficientDigits: 4,
-  statisticDigits: 2,
-  nDigits: 0,
-  r2Digits: 3,
-  parenthesisMode: 't',
-  starLevels: {
-    one: 0.1,
-    two: 0.05,
-    three: 0.01,
-  },
-  missingDisplay: '',
-  booleanDisplay: 'yes-no',
-})
-
-const defaultCustomPublicationConfig = (): CustomPublicationConfig => ({
-  mode: 'current-three-line',
-  title: '表 1：自定义回归结果',
-  note: buildCustomPublicationNote(defaultCustomPublicationFormatRules()),
-  selectedSourceIds: [],
-  columns: {},
-  columnOrder: [],
-  variableOrder: [],
-  variableLabels: {},
-  hiddenVariableIds: [],
-  statisticOrder: [],
-  statisticLabels: {},
-  disabledStatisticIds: [],
-  formatRules: defaultCustomPublicationFormatRules(),
-})
-
-const normalizeCustomPublicationConfig = (candidate?: Partial<CustomPublicationConfig>): CustomPublicationConfig => {
-  const base = defaultCustomPublicationConfig()
-  return {
-    ...base,
-    ...candidate,
-    mode: candidate?.mode === 'custom' ? 'custom' : 'current-three-line',
-    columns: candidate?.columns ?? base.columns,
-    columnOrder: candidate?.columnOrder ?? base.columnOrder,
-    variableOrder: candidate?.variableOrder ?? base.variableOrder,
-    variableLabels: candidate?.variableLabels ?? base.variableLabels,
-    hiddenVariableIds: candidate?.hiddenVariableIds ?? base.hiddenVariableIds,
-    statisticOrder: candidate?.statisticOrder ?? base.statisticOrder,
-    statisticLabels: candidate?.statisticLabels ?? base.statisticLabels,
-    disabledStatisticIds: candidate?.disabledStatisticIds ?? base.disabledStatisticIds,
-    formatRules: {
-      ...base.formatRules,
-      ...(candidate?.formatRules ?? {}),
-      starLevels: {
-        ...base.formatRules.starLevels,
-        ...(candidate?.formatRules?.starLevels ?? {}),
-      },
-    },
-  }
-}
-
-const loadCustomPublicationTemplates = () => {
-  try {
-    const stored = window.localStorage.getItem(customPublicationTemplateStorageKey)
-    return stored
-      ? (JSON.parse(stored) as CustomPublicationTemplate[]).map((template) => ({
-          ...template,
-          config: normalizeCustomPublicationConfig(template.config),
-        }))
-      : []
-  } catch {
-    return []
-  }
-}
-
-const loadCustomPublicationDefaultTemplateId = () => {
-  try {
-    return window.localStorage.getItem(customPublicationDefaultTemplateStorageKey) ?? ''
-  } catch {
-    return ''
-  }
-}
-
-const loadCustomPublicationDraft = () => {
-  try {
-    const stored = window.localStorage.getItem(customPublicationDraftStorageKey)
-    return stored ? normalizeCustomPublicationConfig(JSON.parse(stored) as Partial<CustomPublicationConfig>) : defaultCustomPublicationConfig()
-  } catch {
-    return defaultCustomPublicationConfig()
-  }
-}
-
-const moveOrderedItem = (items: string[], id: string, toIndex: number) => {
-  const index = items.indexOf(id)
-  if (index === -1 || toIndex < 0 || toIndex >= items.length || index === toIndex) return items
-  const next = [...items]
-  const [item] = next.splice(index, 1)
-  next.splice(toIndex, 0, item)
-  return next
-}
-
-const loadSnapshots = () => {
-  try {
-    const stored = window.localStorage.getItem(snapshotStorageKey)
-    return stored ? (JSON.parse(stored) as WorkbenchSnapshot[]) : []
-  } catch {
-    return []
-  }
-}
-
-const hasField = (roles: DataRoles, field: string) =>
-  roles.idFields.includes(field) || roles.groupFields.includes(field) || roles.timeField === field
-
-const fieldRoleLabel = (roles: DataRoles, field: string) => {
-  if (roles.idFields.includes(field)) return 'ID'
-  if (roles.timeField === field) return 'TIME'
-  if (roles.groupFields.includes(field)) return 'GROUP'
-  return ''
-}
-
-const fieldRoleValue = (roles: DataRoles, field: string) => {
-  if (roles.idFields.includes(field)) return 'id'
-  if (roles.timeField === field) return 'time'
-  if (roles.groupFields.includes(field)) return 'group'
-  return 'model'
-}
-
-const summarizeFields = (fields: string[]) => (fields.length > 0 ? fields.join(', ') : '未设置')
-
-const withoutField = (fields: string[], field: string) => fields.filter((entry) => entry !== field)
-
-const compactValue = (value: Row[string]) => (value === null || value === undefined || value === '' ? '' : String(value))
-
-const createRunSignature = (payload: unknown) => JSON.stringify(payload)
-
-const loadModelUsage = () => {
-  try {
-    const stored = window.localStorage.getItem(modelUsageStorageKey)
-    return stored ? (JSON.parse(stored) as ModelUsageMap) : {}
-  } catch {
-    return {}
-  }
-}
-
-const getCompositeId = (row: Row, idFields: string[]) => idFields.map((field) => compactValue(row[field])).join(' / ')
-
 const asParamString = (value: ModelParamValue | undefined) => {
   if (Array.isArray(value)) return value[0] ?? ''
   if (value && typeof value === 'object') return ''
@@ -622,796 +93,156 @@ const asParamArray = (value: ModelParamValue | undefined) => (Array.isArray(valu
 const asSpatialWeightsParam = (value: ModelParamValue | undefined): SpatialWeightsParam | null =>
   value && typeof value === 'object' && !Array.isArray(value) && value.kind === 'spatial-weights' ? value : null
 
-const compactWeightCell = (value: unknown) => (value === null || value === undefined ? '' : String(value).trim())
-
-const parseDelimitedWeightLine = (line: string) => line.split(/[,\s]+/).map((value) => value.trim()).filter(Boolean)
-
-const parseGwtWeights = (text: string, fileName: string): SpatialWeightsParam | null => {
-  const edges = text
-    .split(/\r?\n/)
-    .map((line) => parseDelimitedWeightLine(line))
-    .flatMap((tokens) => {
-      if (tokens.length < 3) return []
-      const weight = Number(tokens[2])
-      return Number.isFinite(weight) && weight !== 0 ? [{ from: tokens[0], to: tokens[1], weight }] : []
-    })
-
-  if (edges.length === 0) return null
-  const nodeCount = new Set(edges.flatMap((edge) => [edge.from, edge.to])).size
-
-  return {
-    kind: 'spatial-weights',
-    fileName,
-    format: 'edge-list',
-    edges,
-    summary: `GWT · ${edges.length} 条边 · ${nodeCount} 个节点`,
-  }
-}
-
-const parseGalWeights = (text: string, fileName: string): SpatialWeightsParam | null => {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => parseDelimitedWeightLine(line))
-    .filter((tokens) => tokens.length > 0)
-  const edges: Array<{ from: string; to: string; weight: number }> = []
-  let index = lines[0]?.length === 1 && Number.isFinite(Number(lines[0][0])) ? 1 : 0
-
-  while (index < lines.length) {
-    const header = lines[index]
-    const from = header[0]
-    const neighborCount = Number(header[1])
-    if (!from || !Number.isFinite(neighborCount)) {
-      index += 1
-      continue
-    }
-
-    const neighbors = [...header.slice(2)]
-    index += 1
-    while (neighbors.length < neighborCount && index < lines.length) {
-      neighbors.push(...lines[index])
-      index += 1
-    }
-
-    neighbors.slice(0, neighborCount).forEach((to) => {
-      if (to) edges.push({ from, to, weight: 1 })
-    })
-  }
-
-  if (edges.length === 0) return null
-  const nodeCount = new Set(edges.flatMap((edge) => [edge.from, edge.to])).size
-
-  return {
-    kind: 'spatial-weights',
-    fileName,
-    format: 'edge-list',
-    edges,
-    summary: `GAL · ${edges.length} 条邻接 · ${nodeCount} 个节点`,
-  }
-}
-
-const parseSpatialWeightsText = (text: string, fileName: string): SpatialWeightsParam => {
-  const extension = fileName.split('.').pop()?.toLowerCase()
-  if (extension === 'gwt') {
-    const parsed = parseGwtWeights(text, fileName)
-    if (parsed) return parsed
-  }
-
-  if (extension === 'gal') {
-    const parsed = parseGalWeights(text, fileName)
-    if (parsed) return parsed
-  }
-
-  const parsedWithHeader = Papa.parse<Record<string, unknown>>(text, {
-    header: true,
-    skipEmptyLines: true,
-    dynamicTyping: true,
-  })
-  const headerRows = parsedWithHeader.data.filter((row) => Object.values(row).some((value) => compactWeightCell(value)))
-  const headerFields = parsedWithHeader.meta.fields ?? []
-  const normalizedFields = headerFields.reduce<Record<string, string>>((map, field) => {
-    map[field.toLowerCase().trim()] = field
-    return map
-  }, {})
-  const fromField = normalizedFields.from ?? normalizedFields.source ?? normalizedFields.origin ?? normalizedFields.i ?? normalizedFields.id ?? normalizedFields['起点'] ?? normalizedFields['来源'] ?? normalizedFields['源']
-  const toField = normalizedFields.to ?? normalizedFields.target ?? normalizedFields.neighbor ?? normalizedFields.neighbour ?? normalizedFields.j ?? normalizedFields['终点'] ?? normalizedFields['目标'] ?? normalizedFields['邻居']
-  const weightField = normalizedFields.weight ?? normalizedFields.w ?? normalizedFields.value ?? normalizedFields.weights ?? normalizedFields['权重'] ?? normalizedFields['值']
-
-  if (fromField && toField) {
-    const edges = headerRows.flatMap((row) => {
-      const from = compactWeightCell(row[fromField])
-      const to = compactWeightCell(row[toField])
-      const weight = weightField ? Number(row[weightField]) : 1
-      return from && to && Number.isFinite(weight) && weight !== 0 ? [{ from, to, weight }] : []
-    })
-
-    if (edges.length > 0) {
-      const nodeCount = new Set(edges.flatMap((edge) => [edge.from, edge.to])).size
-      return {
-        kind: 'spatial-weights',
-        fileName,
-        format: 'edge-list',
-        edges,
-        summary: `${edges.length} 条边 · ${nodeCount} 个节点`,
-      }
-    }
-  }
-
-  const matrixRows = Papa.parse<string[]>(text, {
-    header: false,
-    skipEmptyLines: true,
-  }).data.filter((row) => row.some((value) => compactWeightCell(value)))
-  if (matrixRows.length < 2) throw new Error('空间权重文件至少需要 2 行。')
-
-  const header = matrixRows[0].map(compactWeightCell)
-  const nodes = header.slice(1)
-  const matrix = matrixRows.slice(1).map((row) => row.slice(1).map((value) => Number(value)))
-  const rowNodes = matrixRows.slice(1).map((row) => compactWeightCell(row[0]))
-
-  if (nodes.length === 0 || matrix.length === 0 || matrix.some((row) => row.length !== nodes.length || row.some((value) => !Number.isFinite(value)))) {
-    throw new Error('空间权重文件无法识别。请使用 from/to/weight 边表，或第一行/第一列为空间 ID 的方阵 CSV。')
-  }
-
-  return {
-    kind: 'spatial-weights',
-    fileName,
-    format: 'matrix',
-    nodes: rowNodes.every(Boolean) ? rowNodes : nodes,
-    matrix,
-    summary: `${matrix.length}x${nodes.length} 权重矩阵`,
-  }
-}
-
-const getFeatureColumnsForPlugin = (plugin: ModelPlugin, profiles: ReturnType<typeof profileRows>, categoricalEncoding: DataPrepConfig['categoricalEncoding']) => {
-  if (plugin.supportedFeatureTypes) {
-    return profiles.filter((profile) => plugin.supportedFeatureTypes?.includes(profile.type)).map((profile) => profile.name)
-  }
-
-  const numericColumns = profiles.filter((profile) => profile.type === 'numeric').map((profile) => profile.name)
-  const categoricalColumns = profiles.filter((profile) => profile.type === 'category').map((profile) => profile.name)
-
-  return plugin.supportsCategoricalFeatures && categoricalEncoding === 'one-hot'
-    ? [...numericColumns, ...categoricalColumns]
-    : numericColumns
-}
-
-const diagnosePanelBalance = (rows: Row[], roles: DataRoles): PanelBalanceDiagnosis => {
-  const emptyDiagnosis = {
-    status: 'not-configured' as const,
-    title: '未设置面板维度',
-    summary: '设置 ID 和 Time 字段后，系统会判断数据是否为平衡面板。',
-    idCount: 0,
-    timeCount: 0,
-    expectedObservations: 0,
-    actualObservations: rows.length,
-    missingCombinations: 0,
-    duplicateCombinations: 0,
-    missingIdRows: 0,
-    missingTimeRows: 0,
-    examples: [],
-  }
-
-  if (rows.length === 0 || roles.idFields.length === 0 || !roles.timeField) return emptyDiagnosis
-
-  const validRows = rows.filter((row) => roles.idFields.every((field) => compactValue(row[field])) && compactValue(row[roles.timeField]))
-  const missingIdRows = rows.length - rows.filter((row) => roles.idFields.every((field) => compactValue(row[field]))).length
-  const missingTimeRows = rows.length - rows.filter((row) => compactValue(row[roles.timeField])).length
-  const ids = Array.from(new Set(validRows.map((row) => getCompositeId(row, roles.idFields)))).sort()
-  const times = Array.from(new Set(validRows.map((row) => compactValue(row[roles.timeField])))).sort()
-  const counts = new Map<string, number>()
-
-  validRows.forEach((row) => {
-    const key = `${getCompositeId(row, roles.idFields)}\u0000${compactValue(row[roles.timeField])}`
-    counts.set(key, (counts.get(key) ?? 0) + 1)
-  })
-
-  const missingExamples: string[] = []
-  let missingCombinations = 0
-  ids.forEach((id) => {
-    const missingTimes = times.filter((time) => !counts.has(`${id}\u0000${time}`))
-    missingCombinations += missingTimes.length
-    if (missingTimes.length > 0 && missingExamples.length < 4) {
-      missingExamples.push(`${id} 缺少 ${missingTimes.slice(0, 4).join(', ')}${missingTimes.length > 4 ? ' 等时间点' : ''}`)
-    }
-  })
-
-  const duplicateExamples: string[] = []
-  let duplicateCombinations = 0
-  counts.forEach((count, key) => {
-    if (count <= 1) return
-    duplicateCombinations += count - 1
-    if (duplicateExamples.length < 3) {
-      const [id, time] = key.split('\u0000')
-      duplicateExamples.push(`${id} 在 ${time} 有 ${count} 条记录`)
-    }
-  })
-
-  const issueExamples = [
-    ...(missingIdRows > 0 ? [`${missingIdRows} 行缺少 ID 字段`] : []),
-    ...(missingTimeRows > 0 ? [`${missingTimeRows} 行缺少 Time 字段`] : []),
-    ...missingExamples,
-    ...duplicateExamples,
-  ].slice(0, 6)
-  const expectedObservations = ids.length * times.length
-  const status = missingCombinations === 0 && duplicateCombinations === 0 && missingIdRows === 0 && missingTimeRows === 0 ? 'balanced' : 'unbalanced'
-
-  return {
-    status,
-    title: status === 'balanced' ? '平衡面板' : '不平衡面板',
-    summary:
-      status === 'balanced'
-        ? '每个 ID 都覆盖相同 Time 集合，且没有重复 ID-Time 组合。'
-        : '存在缺失 ID-Time 组合、重复组合，或维度字段缺失。',
-    idCount: ids.length,
-    timeCount: times.length,
-    expectedObservations,
-    actualObservations: validRows.length,
-    missingCombinations,
-    duplicateCombinations,
-    missingIdRows,
-    missingTimeRows,
-    examples: issueExamples,
-  }
-}
-
-const inferDataRoles = (rows: Row[]): DataRoles => {
-  const columns = Object.keys(rows[0] ?? {})
-  const lower = (column: string) => column.toLowerCase()
-  const idFields = columns.filter((column) => /(^id$|_id$|^id_|编号|代码|code$)/i.test(column)).slice(0, 2)
-  const timeField =
-    columns.find((column) => /(^year$|年份|年度)/i.test(column)) ??
-    columns.find((column) => /(^date$|日期|time|month|月份|季度|quarter)/i.test(lower(column))) ??
-    ''
-  const groupFields = columns
-    .filter((column) => !idFields.includes(column) && column !== timeField)
-    .filter((column) => /(group|category|region|industry|segment|类别|分组|地区|行业)/i.test(column))
-    .slice(0, 2)
-
-  return { idFields, timeField, groupFields }
-}
-
 function App() {
-  const [rows, setRows] = useState<Row[]>([])
-  const [fileName, setFileName] = useState('')
-  const [uploadError, setUploadError] = useState('')
-  const [typeOverrides, setTypeOverrides] = useState<TypeOverrides>({})
-  const [prepConfig, setPrepConfig] = useState<DataPrepConfig>({
-    missingStrategy: 'drop',
-    categoricalEncoding: 'one-hot',
-  })
-  const [inferenceConfig, setInferenceConfig] = useState<InferenceConfig>({
-    standardError: 'ols',
-    clusterField: '',
-  })
-  const [activeModelId, setActiveModelId] = useState<string | null>(null)
-  const [draftModelId, setDraftModelId] = useState<string | null>(null)
-  const [isDataModalOpen, setIsDataModalOpen] = useState(false)
-  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
-  const [missingValueAlert, setMissingValueAlert] = useState<MissingValueAlert | null>(null)
-  const [dataRoles, setDataRoles] = useState<DataRoles>(emptyDataRoles)
-  const [isModelLibraryOpen, setIsModelLibraryOpen] = useState(false)
-  const [modelSearch, setModelSearch] = useState('')
-  const [selectedModelCategory, setSelectedModelCategory] = useState(allModelCategory)
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('excel')
   const [selectedExportItemIds, setSelectedExportItemIds] = useState<string[]>([])
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState('')
-  const [customPublicationConfig, setCustomPublicationConfig] = useState<CustomPublicationConfig>(loadCustomPublicationDraft)
-  const [customPublicationTemplates, setCustomPublicationTemplates] = useState<CustomPublicationTemplate[]>(loadCustomPublicationTemplates)
-  const [customPublicationDefaultTemplateId, setCustomPublicationDefaultTemplateId] = useState(loadCustomPublicationDefaultTemplateId)
-  const [draggingPublicationItem, setDraggingPublicationItem] = useState<CustomPublicationDragItem | null>(null)
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('workbench')
-  const [snapshotViewFilter, setSnapshotViewFilter] = useState<SnapshotViewFilter>('recent')
-  const [modelUsage, setModelUsage] = useState<ModelUsageMap>(loadModelUsage)
-  const [snapshots, setSnapshots] = useState<WorkbenchSnapshot[]>(loadSnapshots)
-  const [renamingSnapshotId, setRenamingSnapshotId] = useState('')
-  const [snapshotNameDraft, setSnapshotNameDraft] = useState('')
-  const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])
-  const [isSnapshotManageMode, setIsSnapshotManageMode] = useState(false)
-  const [runState, setRunState] = useState<RunState>({
-    result: null,
-    error: '',
-    logs: [{ level: 'info', message: '导入数据并点击运行模型后，这里会显示结果。' }],
-    signature: '',
-  })
-  const [isModelRunning, setIsModelRunning] = useState(false)
-  const [runStatus, setRunStatus] = useState('')
-  const [runTask, setRunTask] = useState<RunTask | null>(null)
-  const [runFailureDialog, setRunFailureDialog] = useState<RunFailureDialog | null>(null)
-  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('model')
-  const [isVariableSetupOpen, setIsVariableSetupOpen] = useState(false)
   const [dataPreviewScrollTop, setDataPreviewScrollTop] = useState(0)
-  const runCancelRef = useRef(false)
-  const runWorkerRef = useRef<Worker | null>(null)
-  const hasActiveModel = Boolean(activeModelId)
-  const activeModel = activeModelId ? getModelPlugin(activeModelId) : noModelPlugin
-  const draftModel = draftModelId ? getModelPlugin(draftModelId) : null
-  const modelMaturity = getModelMaturity(activeModel)
-  const canImportData = hasActiveModel && !isModelRunning
-  const hasDataset = rows.length > 0
-  const profiles = useMemo(() => profileRows(rows, typeOverrides), [rows, typeOverrides])
-  const previewColumns = useMemo(() => Object.keys(rows[0] ?? {}), [rows])
+
+  const session = useWorkbenchSession({
+    workspaceTab,
+    isExportModalOpen,
+    onSwitchModel: () => setWorkspaceTab('workbench'),
+  })
+
+  const { data, model, workflow, run, snapshots: snapshotState, actions } = session
+  const {
+    rows,
+    fileName,
+    uploadError,
+    dataRoles,
+    pendingImport,
+    missingValueAlert,
+    isDataModalOpen,
+    hasDataset,
+    profiles,
+    previewColumns,
+    pendingColumns,
+    pendingProfiles,
+    pendingPreviewRows,
+    dimensionColumns,
+    numericColumns,
+    panelDiagnosis,
+    hasRoleSetting,
+  } = data
+  const {
+    activeModelId,
+    activeModel,
+    draftModel,
+    hasActiveModel,
+    inferenceConfig,
+    effectiveInference,
+    sanitizedConfig,
+    selectedTarget,
+    selectedFeatures,
+    selectedFeatureSummary,
+    schemaColumnsByType,
+    selectableFeatureColumns,
+    eligibleFeatureColumns,
+    clusterColumns,
+    isModelLibraryOpen,
+    modelSearch,
+    selectedModelCategory,
+    modelMaturity,
+    modelCategories,
+    filteredModelPlugins,
+    recentModelPlugins,
+    parameterSections,
+    validationIssues,
+    validationErrors,
+    activeFormula,
+  } = model
+  const {
+    isVariableSetupOpen,
+    effectiveWorkflowStep,
+    workspaceMode,
+    canImportData,
+    hasStaleResult,
+  } = workflow
+  const {
+    currentRunSignature,
+    result,
+    mainResultTable,
+    secondaryResultTables,
+    modelError,
+    runLogs,
+    runState,
+    runTask,
+    runFailureDialog,
+    isModelRunning,
+  } = run
+  const {
+    snapshotViewFilter,
+    snapshots,
+    renamingSnapshotId,
+    snapshotNameDraft,
+    selectedSnapshotIds,
+    isSnapshotManageMode,
+    selectedSnapshotIdSet,
+    visibleSnapshots,
+    visibleSnapshotIds,
+    selectedSnapshotsAllPinned,
+    selectedSnapshotsAllFavorite,
+    snapshotSummaryText,
+  } = snapshotState
+
+  const setIsDataModalOpen = actions.data.setIsDataModalOpen
+  const setPendingImport = actions.data.setPendingImport
+  const setDataFieldRole = actions.data.setDataFieldRole
+  const handleUpload = actions.data.handleUpload
+  const updateColumnType = actions.data.updateColumnType
+  const togglePendingRoleField = actions.data.togglePendingRoleField
+  const setPendingTimeField = actions.data.setPendingTimeField
+  const continueImportAfterMissingAlert = actions.data.continueImportAfterMissingAlert
+  const cancelMissingValueImport = actions.data.cancelMissingValueImport
+  const confirmImport = actions.data.confirmImport
+
+  const setInferenceConfig = actions.model.setInferenceConfig
+  const setModelConfig = actions.model.setModelConfig
+  const setIsModelLibraryOpen = actions.model.setIsModelLibraryOpen
+  const setModelSearch = actions.model.setModelSearch
+  const setSelectedModelCategory = actions.model.setSelectedModelCategory
+  const setDraftModelId = actions.model.setDraftModelId
+  const openModelLibrary = actions.model.openModelLibrary
+  const applyDraftModel = actions.model.applyDraftModel
+  const toggleFeature = actions.model.toggleFeature
+  const setSchemaParamColumn = actions.model.setSchemaParamColumn
+  const setParamNumber = actions.model.setParamNumber
+  const setParamValue = actions.model.setParamValue
+  const importSpatialWeights = actions.model.importSpatialWeights
+  const toggleParamColumn = actions.model.toggleParamColumn
+
+  const setWorkflowStep = actions.workflow.setWorkflowStep
+  const setIsVariableSetupOpen = actions.workflow.setIsVariableSetupOpen
+  const openVariableSetup = actions.workflow.openVariableSetup
+  const saveVariableSetup = actions.workflow.saveVariableSetup
+  const saveVariableSetupAndRun = actions.workflow.saveVariableSetupAndRun
+  const handleRunModel = actions.run.runModel
+  const cancelRunTask = actions.run.cancelRunTask
+  const closeRunFailureDialog = actions.run.closeRunFailureDialog
+  const saveSnapshot = actions.snapshots.saveSnapshot
+  const restoreSnapshot = actions.snapshots.restoreSnapshot
+  const setSnapshotViewFilter = actions.snapshots.setSnapshotViewFilter
+  const setSnapshotNameDraft = actions.snapshots.setSnapshotNameDraft
+  const setSelectedSnapshotIds = actions.snapshots.setSelectedSnapshotIds
+  const setIsSnapshotManageMode = actions.snapshots.setIsSnapshotManageMode
+  const startRenameSnapshot = actions.snapshots.startRenameSnapshot
+  const cancelRenameSnapshot = actions.snapshots.cancelRenameSnapshot
+  const commitRenameSnapshot = actions.snapshots.commitRenameSnapshot
+  const toggleSnapshotFlag = actions.snapshots.toggleSnapshotFlag
+  const toggleSnapshotSelection = actions.snapshots.toggleSnapshotSelection
+  const toggleAllSnapshots = actions.snapshots.toggleAllSnapshots
+  const setSelectedSnapshotFlag = actions.snapshots.setSelectedSnapshotFlag
+  const deleteSelectedSnapshots = actions.snapshots.deleteSelectedSnapshots
+  const deleteSnapshot = actions.snapshots.deleteSnapshot
+
   const virtualPreviewStart = Math.max(0, Math.floor(dataPreviewScrollTop / dataPreviewRowHeight) - dataPreviewOverscanRows)
   const virtualPreviewEnd = Math.min(rows.length, virtualPreviewStart + dataPreviewVisibleRows + dataPreviewOverscanRows * 2)
   const virtualPreviewRows = useMemo(() => rows.slice(virtualPreviewStart, virtualPreviewEnd), [rows, virtualPreviewEnd, virtualPreviewStart])
-  const pendingColumns = useMemo(() => Object.keys(pendingImport?.rows[0] ?? {}), [pendingImport])
-  const pendingProfiles = useMemo(() => (pendingImport ? profileRows(pendingImport.rows) : []), [pendingImport])
-  const pendingPreviewRows = useMemo(() => pendingImport?.rows.slice(0, 6) ?? [], [pendingImport])
-  const dimensionColumns = useMemo(() => new Set([...dataRoles.idFields, dataRoles.timeField, ...dataRoles.groupFields].filter(Boolean)), [dataRoles])
-  const modelProfiles = useMemo(() => profiles.filter((profile) => !dimensionColumns.has(profile.name)), [dimensionColumns, profiles])
-  const featureProfiles = activeModel.includeDimensionFields ? profiles : modelProfiles
-  const numericColumns = useMemo(
-    () => modelProfiles.filter((profile) => profile.type === 'numeric').map((profile) => profile.name),
-    [modelProfiles],
-  )
-  const eligibleFeatureColumns = useMemo(
-    () => (hasActiveModel ? getFeatureColumnsForPlugin(activeModel, featureProfiles, prepConfig.categoricalEncoding) : []),
-    [activeModel, featureProfiles, hasActiveModel, prepConfig.categoricalEncoding],
-  )
-  const [modelConfig, setModelConfig] = useState<ModelConfig>(() => createEmptyModelConfig(activeModel))
-
-  useEffect(() => {
-    if (!isModelRunning) return undefined
-
-    const intervalId = window.setInterval(() => {
-      setRunTask((current) => {
-        if (!current || current.status === 'cancelled') return current
-        const elapsedMs = Date.now() - current.startedAt
-        const estimatedProgress = Math.min(92, Math.round((elapsedMs / current.estimatedMs) * 86) + 6)
-        return {
-          ...current,
-          elapsedMs,
-          progress: Math.max(current.progress, estimatedProgress),
-        }
-      })
-    }, 250)
-
-    return () => window.clearInterval(intervalId)
-  }, [isModelRunning])
-
-  useEffect(
-    () => () => {
-      runCancelRef.current = true
-      runWorkerRef.current?.terminate()
-    },
-    [],
-  )
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(modelUsageStorageKey, JSON.stringify(modelUsage))
-    } catch {
-      // Usage ranking is best-effort and should not block analysis.
-    }
-  }, [modelUsage])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(customPublicationTemplateStorageKey, JSON.stringify(customPublicationTemplates))
-    } catch {
-      // Template persistence is best-effort and should not block export.
-    }
-  }, [customPublicationTemplates])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(customPublicationDefaultTemplateStorageKey, customPublicationDefaultTemplateId)
-    } catch {
-      // Default template persistence is best-effort.
-    }
-  }, [customPublicationDefaultTemplateId])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(customPublicationDraftStorageKey, JSON.stringify(customPublicationConfig))
-    } catch {
-      // Draft persistence is best-effort and should not block export.
-    }
-  }, [customPublicationConfig])
-
-  const sanitizedConfig = useMemo(
-    () =>
-      hasActiveModel
-        ? removeImplicitColumnDefaults(
-            activeModel,
-            modelConfig,
-            activeModel.sanitizeConfig(modelConfig, eligibleFeatureColumns, numericColumns),
-            eligibleFeatureColumns,
-            numericColumns,
-          )
-        : createEmptyModelConfig(null),
-    [activeModel, eligibleFeatureColumns, hasActiveModel, modelConfig, numericColumns],
-  )
-  const selectedTarget = sanitizedConfig.target
-  const selectedFeatures = sanitizedConfig.features
-  const schemaColumnsByType = useMemo(
-    () =>
-      profiles.reduce<Record<string, string[]>>((groups, profile) => {
-        groups[profile.type] = [...(groups[profile.type] ?? []), profile.name]
-        return groups
-      }, {}),
-    [profiles],
-  )
-  const selectableFeatureColumns = useMemo(
-    () => eligibleFeatureColumns.filter((column) => !activeModel.requiresTarget || column !== selectedTarget),
-    [activeModel.requiresTarget, eligibleFeatureColumns, selectedTarget],
-  )
-  const panelDiagnosis = useMemo(() => diagnosePanelBalance(rows, dataRoles), [dataRoles, rows])
-  const clusterColumns = useMemo(() => {
-    const preferred = [...dataRoles.idFields, dataRoles.timeField, ...dataRoles.groupFields].filter(Boolean)
-    return Array.from(new Set([...preferred, ...previewColumns]))
-  }, [dataRoles, previewColumns])
-  const effectiveInference = useMemo(
-    () => ({
-      ...inferenceConfig,
-      clusterField: inferenceConfig.clusterField || clusterColumns[0] || '',
-    }),
-    [clusterColumns, inferenceConfig],
-  )
-  const currentRunSignature = useMemo(
-    () =>
-      createRunSignature({
-        modelId: activeModelId,
-        fileName,
-        rowCount: rows.length,
-        fields: profiles.map((profile) => [profile.name, profile.type, profile.missing, profile.unique]),
-        dataRoles,
-        prepConfig,
-        inference: hasActiveModel && activeModel.supportsInference ? effectiveInference : undefined,
-        config: sanitizedConfig,
-      }),
-    [activeModel, activeModelId, dataRoles, effectiveInference, fileName, hasActiveModel, prepConfig, profiles, rows.length, sanitizedConfig],
-  )
-  const hasStaleResult = Boolean(runState.result && runState.signature !== currentRunSignature)
-  const result = hasStaleResult ? null : runState.result
-  const modelError = runState.signature === currentRunSignature ? runState.error : ''
-  const mainResultTable = useMemo(() => result?.tables.find((table) => table.id === 'coefficients') ?? result?.tables[0] ?? null, [result])
-  const secondaryResultTables = useMemo(
-    () => result?.tables.filter((table) => table.id !== mainResultTable?.id) ?? [],
-    [mainResultTable?.id, result],
-  )
-  const runLogs = useMemo(
-    () => {
-      if (isModelRunning) {
-        return [
-          { level: 'info', message: runTask?.phase || runStatus || '正在运行模型。' },
-          { level: 'info', message: `任务已运行 ${formatDuration(runTask?.elapsedMs ?? 0)}，预计 ${formatDuration(runTask?.estimatedMs ?? 0)} 内完成。` },
-          { level: 'info', message: '运行期间参数面板已锁定，可以点击取消终止尚未进入计算核心的任务。' },
-        ] satisfies RunLogEntry[]
-      }
-
-      if (!hasDataset) return [{ level: 'info', message: '请先导入 CSV 或 XLSX 数据。' } satisfies RunLogEntry]
-
-      if (runTask?.status === 'cancelled' && runState.signature === currentRunSignature) return runState.logs
-
-      if (result || modelError) return runState.logs
-
-      if (hasStaleResult) {
-        return [
-          { level: 'warning', message: '模型、参数或数据已变更，当前结果已过期。请点击运行模型更新。' } satisfies RunLogEntry,
-          ...runState.logs,
-        ]
-      }
-
-      return [{ level: 'info', message: '参数设置完成后，点击运行模型开始计算。' } satisfies RunLogEntry]
-    },
-	    [currentRunSignature, hasDataset, hasStaleResult, isModelRunning, modelError, result, runState.logs, runState.signature, runStatus, runTask],
-	  )
-  const publicationSources = useMemo(() => {
-    const currentSource =
-      result && hasActiveModel
-        ? [
-            {
-              id: 'current',
-              label: `当前结果 · ${activeModel.name}`,
-              result,
-              config: sanitizedConfig,
-              dimensions: dataRoles,
-              modelName: activeModel.name,
-              modelShortName: activeModel.shortName || activeModel.name,
-              formula: activeModel.getFormula(sanitizedConfig),
-              createdAt: new Date().toISOString(),
-            },
-          ]
-        : []
-    const snapshotSources = snapshots
-      .filter((snapshot) => snapshot.result)
-      .map((snapshot) => ({
-        id: `snapshot:${snapshot.id}`,
-        label: snapshot.label,
-        result: snapshot.result as ModelResult,
-        config: snapshot.modelConfig,
-        dimensions: snapshot.dataRoles ?? emptyDataRoles,
-        modelName: snapshot.modelName,
-        modelShortName: snapshot.modelShortName || getModelPlugin(snapshot.modelId).shortName || snapshot.modelName,
-        formula: snapshot.formula,
-        createdAt: snapshot.savedResultAt ?? snapshot.createdAt,
-      }))
-
-    return [...currentSource, ...snapshotSources]
-  }, [activeModel, dataRoles, hasActiveModel, result, sanitizedConfig, snapshots])
-  const hasPublicationSources = publicationSources.some((source) => source.result.tables.some((table) => table.id === 'coefficients'))
-  const exportItems = useMemo<ExportItem[]>(() => {
-    if (!result) return []
-    const hasCoefficientTable = result.tables.some((table) => table.id === 'coefficients')
-
-    return [
-      { id: 'summary', label: '模型摘要', detail: `${result.summary.length} 个指标`, kind: 'summary' },
-      ...result.tables.map((table) => ({
-        id: `table:${table.id}`,
-        label: table.id === 'coefficients' ? '回归结果' : table.title,
-        detail: `${table.rows.length} 行 · ${table.columns.length} 列`,
-        kind: 'table' as const,
-      })),
-      ...(hasCoefficientTable
-        ? [
-            { id: 'stata', label: 'Stata 风格回归表', detail: 'Coef. / Std. err. / P>|t|', kind: 'report' as const },
-            { id: 'three-line', label: '论文三线表', detail: '系数星号与标准误', kind: 'report' as const },
-            ...(hasPublicationSources
-              ? [{ id: 'custom-publication', label: '自定义论文表', detail: `${publicationSources.length} 个可用结果源`, kind: 'report' as const }]
-              : []),
-          ]
-        : []),
-      { id: 'logs', label: '模型运行日志', detail: `${runLogs.length} 条日志`, kind: 'meta' },
-      { id: 'config', label: '参数配置 JSON', detail: '模型、字段、参数快照', kind: 'meta' },
-    ]
-  }, [hasPublicationSources, publicationSources.length, result, runLogs.length])
-  const selectedExportItemSet = useMemo(() => new Set(selectedExportItemIds), [selectedExportItemIds])
-  const hasCurrentPublicationSource = publicationSources.some((source) => source.id === 'current')
-  const defaultCustomPublicationSourceIds = useMemo(() => (hasCurrentPublicationSource ? ['current'] : []), [hasCurrentPublicationSource])
-  const effectiveCustomPublicationSourceIds = useMemo(
-    () => (customPublicationConfig.selectedSourceIds.length > 0 ? customPublicationConfig.selectedSourceIds : defaultCustomPublicationSourceIds),
-    [customPublicationConfig.selectedSourceIds, defaultCustomPublicationSourceIds],
-  )
-  const customPublicationSelectedSet = useMemo(() => new Set(effectiveCustomPublicationSourceIds), [effectiveCustomPublicationSourceIds])
-  const selectedPublicationSources = useMemo(
-    () => {
-      const selected = publicationSources.filter((source) => customPublicationSelectedSet.has(source.id))
-      const byId = new Map(selected.map((source) => [source.id, source]))
-      const ordered: CustomPublicationSource[] = []
-      customPublicationConfig.columnOrder.forEach((id) => {
-        const source = byId.get(id)
-        if (source) {
-          ordered.push(source)
-          byId.delete(id)
-        }
-      })
-      byId.forEach((source) => ordered.push(source))
-      return ordered
-    },
-    [customPublicationConfig.columnOrder, customPublicationSelectedSet, publicationSources],
-  )
-  const customPublicationVariableOptions = useMemo(() => {
-    const byId = new Map<string, { id: string; label: string }>()
-    selectedPublicationSources.forEach((source) => {
-      const coefficientTable = source.result.tables.find((table) => table.id === 'coefficients')
-      coefficientTable?.rows.forEach((row) => {
-        const rawId = String(row.term ?? row.variable ?? '').trim()
-        if (!rawId) return
-        const label = customPublicationConfig.variableLabels[rawId]?.trim() || (rawId === '_cons' ? 'Cons' : rawId)
-        if (!byId.has(rawId)) byId.set(rawId, { id: rawId, label })
-      })
-    })
-    return Array.from(byId.values())
-  }, [customPublicationConfig.variableLabels, selectedPublicationSources])
-  const orderedCustomPublicationVariableOptions = useMemo(() => {
-    const optionMap = new Map(customPublicationVariableOptions.map((option) => [option.id, option]))
-    const ordered: Array<{ id: string; label: string }> = []
-    customPublicationConfig.variableOrder.forEach((id) => {
-      const option = optionMap.get(id)
-      if (option) {
-        ordered.push(option)
-        optionMap.delete(id)
-      }
-    })
-    optionMap.forEach((option) => ordered.push(option))
-    return ordered
-  }, [customPublicationConfig.variableOrder, customPublicationVariableOptions])
-  const hiddenCustomPublicationVariableSet = useMemo(() => new Set(customPublicationConfig.hiddenVariableIds), [customPublicationConfig.hiddenVariableIds])
-  const customPublicationStatisticOptions = useMemo(() => {
-    const rows: Array<{ id: string; label: string; detail: string }> = []
-    if (selectedPublicationSources.length === 0) return rows
-
-    rows.push({
-      id: 'controls',
-      label: customPublicationConfig.statisticLabels.controls?.trim() || 'Controls',
-      detail: '控制变量行，按模型列展示 Yes / 空值',
-    })
-
-    const fixedEffectLabels = new Set<string>()
-    selectedPublicationSources.forEach((source) => {
-      source.dimensions.groupFields.forEach((field) => fixedEffectLabels.add(`${field} FE`))
-      source.dimensions.idFields.forEach((field) => fixedEffectLabels.add(`${field} FE`))
-      if (source.dimensions.timeField) fixedEffectLabels.add(`${source.dimensions.timeField} FE`)
-    })
-    Array.from(fixedEffectLabels).forEach((label) => {
-      rows.push({
-        id: `fe:${label}`,
-        label: customPublicationConfig.statisticLabels[`fe:${label}`]?.trim() || label,
-        detail: '固定效应统计行',
-      })
-    })
-
-    rows.push(
-      { id: 'n', label: customPublicationConfig.statisticLabels.n?.trim() || 'N', detail: '样本量统计行' },
-      { id: 'adj-r2', label: customPublicationConfig.statisticLabels['adj-r2']?.trim() || 'Adj-R²', detail: '调整 R² 统计行' },
-    )
-
-    const byId = new Map(rows.map((row) => [row.id, row]))
-    const ordered: typeof rows = []
-    customPublicationConfig.statisticOrder.forEach((id) => {
-      const row = byId.get(id)
-      if (row) {
-        ordered.push(row)
-        byId.delete(id)
-      }
-    })
-    byId.forEach((row) => ordered.push(row))
-
-    return ordered
-  }, [customPublicationConfig.statisticLabels, customPublicationConfig.statisticOrder, selectedPublicationSources])
-  const disabledCustomPublicationStatisticSet = useMemo(() => new Set(customPublicationConfig.disabledStatisticIds), [customPublicationConfig.disabledStatisticIds])
-  const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
-  const isCustomPublicationDefaultTableMode = customPublicationConfig.mode === 'current-three-line' && Boolean(result && hasActiveModel)
-  const customPublicationPreviewTable = hasPublicationSources ? buildCustomPublicationTableFromConfig() : null
-  const customPublicationPreviewHtml = customPublicationPreviewTable ? buildPublicationTableHtml(customPublicationPreviewTable) : ''
-  const canExportCustomPublication = Boolean(customPublicationPreviewTable) && !isExporting
-  const matchedCustomPublicationTemplate = useMemo(() => {
-    const currentSignature = JSON.stringify(customPublicationConfig)
-    return customPublicationTemplates.find((template) => JSON.stringify(template.config) === currentSignature) ?? null
-  }, [customPublicationConfig, customPublicationTemplates])
-  const modelOrder = useMemo(() => new Map(modelPlugins.map((plugin, index) => [plugin.id, index])), [])
-  const modelCategories = useMemo(
-    () => [allModelCategory, ...modelTaskGroupOrder.filter((category) => modelPlugins.some((plugin) => getModelTaskGroup(plugin) === category))],
-    [],
-  )
-  const filteredModelPlugins = useMemo(() => {
-    const query = modelSearch.trim().toLowerCase()
-    const categoryFiltered =
-      selectedModelCategory === allModelCategory
-        ? modelPlugins
-        : modelPlugins.filter((plugin) => getModelTaskGroup(plugin) === selectedModelCategory)
-    const matched = query
-      ? categoryFiltered.filter((plugin) =>
-          [plugin.name, plugin.shortName, plugin.fullName, getModelTaskGroup(plugin), plugin.description, ...plugin.keywords]
-            .join(' ')
-            .toLowerCase()
-            .includes(query),
-        )
-      : categoryFiltered
-
-    return [...matched].sort((left, right) => {
-      if (activeModelId && left.id === activeModelId) return -1
-      if (activeModelId && right.id === activeModelId) return 1
-      const leftUsage = modelUsage[left.id]
-      const rightUsage = modelUsage[right.id]
-      const lastUsedDelta = new Date(rightUsage?.lastUsedAt ?? 0).getTime() - new Date(leftUsage?.lastUsedAt ?? 0).getTime()
-      if (lastUsedDelta !== 0) return lastUsedDelta
-      const countDelta = (rightUsage?.usedCount ?? 0) - (leftUsage?.usedCount ?? 0)
-      if (countDelta !== 0) return countDelta
-      return (modelOrder.get(left.id) ?? 0) - (modelOrder.get(right.id) ?? 0)
-    })
-  }, [activeModelId, modelOrder, modelSearch, modelUsage, selectedModelCategory])
-  const recentModelPlugins = useMemo(
-    () =>
-      modelPlugins
-        .filter((plugin) => plugin.id !== activeModelId && modelUsage[plugin.id]?.lastUsedAt)
-        .sort((left, right) => new Date(modelUsage[right.id]?.lastUsedAt ?? 0).getTime() - new Date(modelUsage[left.id]?.lastUsedAt ?? 0).getTime())
-        .slice(0, 5),
-    [activeModelId, modelUsage],
-  )
-  const parameterSections = useMemo(() => {
-    const schema = activeModel.parameterSchema ?? []
-    return (Object.keys(parameterSectionMeta) as ParameterSectionId[])
-      .map((sectionId) => ({
-        id: sectionId,
-        ...parameterSectionMeta[sectionId],
-        fields: schema.filter((field) => getParameterSectionId(field) === sectionId),
-      }))
-      .filter((section) => section.fields.length > 0)
-  }, [activeModel.parameterSchema])
-  const validationIssues = useMemo(() => {
-    const issues: ValidationIssue[] = []
-
-    if (!hasDataset) return issues
-    if (!hasActiveModel) {
-      issues.push({ level: 'error', message: '请先选择一个分析模型。' })
-      return issues
-    }
-
-    if (activeModel.parameterSchema) {
-      activeModel.parameterSchema.forEach((field) => {
-        if (!field.required) return
-        const values = selectedParamValues(sanitizedConfig, field)
-        if (field.kind !== 'number' && values.length === 0) {
-          issues.push({ level: 'error', message: `请设置「${field.label}」。` })
-        }
-      })
-
-      const selectedFields = activeModel.parameterSchema.flatMap((field) => selectedParamValues(sanitizedConfig, field))
-      const duplicatedFields = Array.from(new Set(selectedFields.filter((field, index) => selectedFields.indexOf(field) !== index)))
-      duplicatedFields.forEach((field) => {
-        issues.push({ level: 'warning', message: `字段「${field}」被重复选择，请确认是否符合模型设定。` })
-      })
-    } else {
-      if (activeModel.requiresTarget && !selectedTarget) {
-        issues.push({ level: 'error', message: `请设置「${activeModel.targetLabel}」。` })
-      }
-
-      if (activeModel.requiresTarget && selectedFeatures.length === 0) {
-        issues.push({ level: 'error', message: `请至少选择一个「${activeModel.featuresLabel}」。` })
-      }
-
-      if (!activeModel.requiresTarget && selectedFeatures.length === 0) {
-        issues.push({ level: 'error', message: `请至少选择一个「${activeModel.featuresLabel}」。` })
-      }
-    }
-
-    const groupField = typeof sanitizedConfig.params?.group === 'string' ? sanitizedConfig.params.group : ''
-    if (groupField) {
-      const groups = new Set(rows.map((row) => previewValue(row[groupField])).filter((value) => value !== 'NA'))
-      if (['independent-t-test', 'nonparametric-test', 'category-summary', 'variance-analysis'].includes(activeModel.id) && groups.size < 2) {
-        issues.push({ level: 'error', message: `分组变量「${groupField}」至少需要 2 个有效组。` })
-      }
-
-      if (activeModel.id === 'independent-t-test' && groups.size > 2) {
-        issues.push({ level: 'warning', message: `独立 t 检验当前会自动取样本量最大的两个组，其他组不会参与比较。` })
-      }
-    }
-
-    if (activeModel.id === 'crosstab-chi-square') {
-      const rowVar = sanitizedConfig.params?.rowVar
-      const colVar = sanitizedConfig.params?.colVar
-      if (rowVar && colVar && rowVar === colVar) {
-        issues.push({ level: 'error', message: '交叉/卡方的行变量和列变量不能相同。' })
-      }
-    }
-
-    if (activeModel.supportsInference && inferenceConfig.standardError === 'cluster' && !effectiveInference.clusterField) {
-      issues.push({ level: 'error', message: 'Cluster 标准误需要选择聚类字段。' })
-    }
-
-    if (slowModelIds.has(activeModel.id) || activeModel.id.startsWith('spatial-')) {
-      issues.push({ level: 'warning', message: `${activeModel.name}属于较慢模型，建议先用小字段集确认设定后再完整运行。` })
-    }
-
-    if (rows.length > 5000 && (slowModelIds.has(activeModel.id) || activeModel.id.startsWith('spatial-'))) {
-      issues.push({ level: 'warning', message: '当前数据量较大，运行可能需要更长时间。' })
-    }
-
-    return issues
-  }, [activeModel, effectiveInference.clusterField, hasActiveModel, hasDataset, inferenceConfig.standardError, rows, sanitizedConfig, selectedFeatures.length, selectedTarget])
-  const validationErrors = validationIssues.filter((issue) => issue.level === 'error')
   const resultInsights = useMemo(() => deriveResultInsights(result), [result])
-  const hasRoleSetting = dataRoles.idFields.length > 0 || Boolean(dataRoles.timeField) || dataRoles.groupFields.length > 0
-  const effectiveWorkflowStep = useMemo<WorkflowStep>(() => {
-    if (isModelRunning) return 'run'
-    if (!hasActiveModel) return 'model'
-    if (modelError) return 'variables'
-    if (result && !hasStaleResult) return 'results'
-    if (result && hasStaleResult && workflowStep === 'results') return 'variables'
-    if (!hasDataset && workflowStep !== 'model') return 'upload'
-    if (workflowStep === 'run') return 'variables'
-    return workflowStep
-  }, [hasActiveModel, hasDataset, hasStaleResult, isModelRunning, modelError, result, workflowStep])
-  const nextAction = useMemo(() => {
-    if (effectiveWorkflowStep === 'model') return hasActiveModel ? '已选择模型，可以继续导入数据。' : '请先选择一个分析模型。'
-    if (effectiveWorkflowStep === 'upload') return '下一步：导入 CSV 或 XLSX 数据。'
-    if (effectiveWorkflowStep === 'roles') return '下一步：设置 ID / Time / Group 字段。'
-    if (effectiveWorkflowStep === 'variables') return '下一步：选择因变量、自变量和控制变量。'
-    if (effectiveWorkflowStep === 'run') return runTask?.phase || '模型正在运行，参数已临时锁定。'
-    if (validationErrors.length > 0) return `请先处理：${validationErrors[0].message}`
-    if (hasStaleResult) return '参数已经变更，建议重新运行模型刷新结果。'
-    if (!result) return '参数已就绪，可以运行模型。'
-    return '结果已生成，按系数估计、核心结论和稳定性检验顺序阅读。'
-  }, [effectiveWorkflowStep, hasActiveModel, hasStaleResult, result, runTask?.phase, validationErrors])
-  const workspaceMode = useMemo<'data' | 'model' | 'result' | 'report' | 'publication'>(() => {
-    if (workspaceTab === 'publication') return 'publication'
-    if (isExportModalOpen) return 'report'
-    if (effectiveWorkflowStep === 'results') return 'result'
-    if (effectiveWorkflowStep === 'upload' || effectiveWorkflowStep === 'roles') return 'data'
-    return 'model'
-  }, [effectiveWorkflowStep, isExportModalOpen, workspaceTab])
   const leadInsight = resultInsights[0] ?? ''
   const secondaryInsights = resultInsights.slice(1)
   const visibleSummaryMetrics = result?.summary.slice(0, 4) ?? []
@@ -1424,18 +255,6 @@ function App() {
   ]
     .filter(Boolean)
     .join(' · ')
-  const activeFormula =
-    !hasActiveModel
-      ? '尚未选择模型'
-      : !hasDataset || validationErrors.length > 0
-        ? '尚未完成变量设定'
-        : activeModel.getFormula(sanitizedConfig)
-  const selectedFeatureSummary =
-    selectedFeatures.length === 0
-      ? '尚未选择解释变量'
-      : selectedFeatures.length <= 3
-        ? selectedFeatures.join('、')
-        : `${selectedFeatures.slice(0, 3).join('、')} 等 ${selectedFeatures.length} 个变量`
   const modelContextLead =
     !isModelRunning && modelError
       ? `模型运行失败，请调整变量后重试：${modelError}`
@@ -1444,6 +263,17 @@ function App() {
       : activeModel.requiresTarget
         ? `${activeModel.targetLabel}已选为 ${selectedTarget || '未设置'}，${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
         : `${activeModel.featuresLabel}当前为 ${selectedFeatureSummary}。`
+  const nextAction = useMemo(() => {
+    if (effectiveWorkflowStep === 'model') return hasActiveModel ? '已选择模型，可以继续导入数据。' : '请先选择一个分析模型。'
+    if (effectiveWorkflowStep === 'upload') return '下一步：导入 CSV 或 XLSX 数据。'
+    if (effectiveWorkflowStep === 'roles') return '下一步：设置 ID / Time / Group 字段。'
+    if (effectiveWorkflowStep === 'variables') return '下一步：选择因变量、自变量和控制变量。'
+    if (effectiveWorkflowStep === 'run') return runTask?.phase || '模型正在运行，参数已临时锁定。'
+    if (validationErrors.length > 0) return `请先处理：${validationErrors[0].message}`
+    if (hasStaleResult) return '参数已经变更，建议重新运行模型刷新结果。'
+    if (!result) return '参数已就绪，可以运行模型。'
+    return '结果已生成，按系数估计、核心结论和稳定性检验顺序阅读。'
+  }, [effectiveWorkflowStep, hasActiveModel, hasStaleResult, result, runTask?.phase, validationErrors])
   const workspaceHeading =
     workspaceMode === 'publication'
       ? '编辑论文表'
@@ -1478,702 +308,6 @@ function App() {
                   : '从系数估计开始，再阅读核心结论和稳定性检验。'
   const primaryParameterSections = parameterSections.filter((section) => section.id !== 'advanced')
   const advancedSchemaSections = parameterSections.filter((section) => section.id === 'advanced')
-  const selectedSnapshotIdSet = useMemo(() => new Set(selectedSnapshotIds), [selectedSnapshotIds])
-  const sortedSnapshots = useMemo(
-    () =>
-      [...snapshots].sort((left, right) => {
-        const pinnedDelta = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))
-        if (pinnedDelta !== 0) return pinnedDelta
-
-        const favoriteDelta = Number(Boolean(right.favorite)) - Number(Boolean(left.favorite))
-        if (favoriteDelta !== 0) return favoriteDelta
-
-        return new Date(right.updatedAt ?? right.createdAt).getTime() - new Date(left.updatedAt ?? left.createdAt).getTime()
-      }),
-    [snapshots],
-  )
-  const filteredSnapshots = useMemo(() => {
-    if (snapshotViewFilter === 'pinned') return sortedSnapshots.filter((snapshot) => snapshot.pinned)
-    if (snapshotViewFilter === 'favorite') return sortedSnapshots.filter((snapshot) => snapshot.favorite)
-    return sortedSnapshots
-  }, [snapshotViewFilter, sortedSnapshots])
-  const visibleSnapshots = useMemo(
-    () => (snapshotViewFilter === 'recent' ? filteredSnapshots.slice(0, 3) : filteredSnapshots),
-    [filteredSnapshots, snapshotViewFilter],
-  )
-  const visibleSnapshotIds = useMemo(() => visibleSnapshots.map((snapshot) => snapshot.id), [visibleSnapshots])
-  const selectedSnapshots = useMemo(() => snapshots.filter((snapshot) => selectedSnapshotIdSet.has(snapshot.id)), [selectedSnapshotIdSet, snapshots])
-  const selectedSnapshotsAllPinned = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.pinned)
-  const selectedSnapshotsAllFavorite = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.favorite)
-  const snapshotSummaryText =
-    snapshotViewFilter === 'recent'
-      ? `最近 ${Math.min(3, sortedSnapshots.length)} 条`
-      : `${filteredSnapshots.length} 条`
-
-  const applyRows = (nextRows: Row[], nextFileName: string, nextDataRoles = emptyDataRoles) => {
-    const cleaned = nextRows.filter((row) => Object.values(row).some((value) => value !== null && value !== ''))
-    if (cleaned.length === 0) {
-      setUploadError('文件没有可读取的数据。')
-      return
-    }
-
-    setRows(cleaned)
-    setFileName(nextFileName)
-    setDataRoles(nextDataRoles)
-    setModelConfig(createEmptyModelConfig(activeModel))
-    setTypeOverrides({})
-    setUploadError('')
-    setRunState({
-      result: null,
-      error: '',
-      logs: [{ level: 'info', message: '数据已导入，请设置变量后运行模型。' }],
-      signature: '',
-    })
-    setRunTask(null)
-    setRunFailureDialog(null)
-    setRunStatus('')
-    setWorkflowStep('roles')
-  }
-
-  const startImportWizard = (cleanedRows: Row[], nextFileName: string) => {
-    setPendingImport({
-      fileName: nextFileName,
-      rows: cleanedRows,
-      roles: inferDataRoles(cleanedRows),
-    })
-    setUploadError('')
-  }
-
-  const openImportWizard = (nextRows: Row[], nextFileName: string) => {
-    const cleaned = nextRows.filter((row) => Object.values(row).some((value) => value !== null && value !== ''))
-    if (cleaned.length === 0) {
-      setUploadError('文件没有可读取的数据。')
-      return
-    }
-
-    const missingSummary = summarizeMissingValues(cleaned, nextFileName)
-    if (missingSummary) {
-      setPendingImport(null)
-      setMissingValueAlert(missingSummary)
-      setUploadError('')
-      return
-    }
-
-    startImportWizard(cleaned, nextFileName)
-  }
-
-  const continueImportAfterMissingAlert = () => {
-    if (!missingValueAlert) return
-
-    startImportWizard(missingValueAlert.rows, missingValueAlert.fileName)
-    setMissingValueAlert(null)
-  }
-
-  const cancelMissingValueImport = () => {
-    setMissingValueAlert(null)
-    setUploadError('')
-  }
-
-  const confirmImport = () => {
-    if (!pendingImport) return
-
-    applyRows(pendingImport.rows, pendingImport.fileName, pendingImport.roles)
-    setPendingImport(null)
-  }
-
-  const updatePendingRoles = (updater: (roles: DataRoles) => DataRoles) => {
-    setPendingImport((current) => (current ? { ...current, roles: updater(current.roles) } : current))
-  }
-
-  const togglePendingRoleField = (kind: 'id' | 'group', field: string) => {
-    updatePendingRoles((current) => {
-      if (kind === 'id') {
-        const nextIdFields = current.idFields.includes(field)
-          ? withoutField(current.idFields, field)
-          : [...current.idFields, field]
-
-        return {
-          idFields: nextIdFields,
-          timeField: current.timeField === field ? '' : current.timeField,
-          groupFields: withoutField(current.groupFields, field),
-        }
-      }
-
-      const nextGroupFields = current.groupFields.includes(field)
-        ? withoutField(current.groupFields, field)
-        : [...current.groupFields, field]
-
-      return {
-        idFields: withoutField(current.idFields, field),
-        timeField: current.timeField === field ? '' : current.timeField,
-        groupFields: nextGroupFields,
-      }
-    })
-  }
-
-  const setPendingTimeField = (field: string) => {
-    updatePendingRoles((current) => ({
-      idFields: withoutField(current.idFields, field),
-      timeField: field,
-      groupFields: withoutField(current.groupFields, field),
-    }))
-  }
-
-  const setDataFieldRole = (field: string, role: string) => {
-    setDataRoles((current) => {
-      const baseRoles = {
-        idFields: withoutField(current.idFields, field),
-        timeField: current.timeField === field ? '' : current.timeField,
-        groupFields: withoutField(current.groupFields, field),
-      }
-
-      if (role === 'id') {
-        return { ...baseRoles, idFields: [...baseRoles.idFields, field] }
-      }
-
-      if (role === 'time') {
-        return { ...baseRoles, timeField: field }
-      }
-
-      if (role === 'group') {
-        return { ...baseRoles, groupFields: [...baseRoles.groupFields, field] }
-      }
-
-      return baseRoles
-    })
-  }
-
-  const switchModel = (modelId: string) => {
-    if (isModelRunning) return
-    const nextModel = getModelPlugin(modelId)
-    setActiveModelId(nextModel.id)
-    setDraftModelId(nextModel.id)
-    setModelConfig(createEmptyModelConfig(nextModel))
-    setUploadError('')
-    setRunState({
-      result: null,
-      error: '',
-      logs: [{ level: 'info', message: `已切换到${nextModel.name}，请重新设置变量后运行。` }],
-      signature: '',
-    })
-    setRunTask(null)
-    setRunFailureDialog(null)
-    setRunStatus('')
-    setWorkspaceTab('workbench')
-    setModelUsage((current) => {
-      const previous = current[nextModel.id]
-      return {
-        ...current,
-        [nextModel.id]: {
-          usedCount: (previous?.usedCount ?? 0) + 1,
-          lastUsedAt: new Date().toISOString(),
-        },
-      }
-    })
-    setModelSearch('')
-    setIsModelLibraryOpen(false)
-    setWorkflowStep(hasDataset ? 'variables' : 'model')
-    setIsVariableSetupOpen(false)
-  }
-
-  const openModelLibrary = () => {
-    if (isModelRunning) return
-    setDraftModelId(null)
-    setIsModelLibraryOpen(true)
-  }
-
-  const applyDraftModel = () => {
-    if (isModelRunning || !draftModel) return
-    switchModel(draftModel.id)
-  }
-
-  const buildRunLogs = (baseLogs: RunLogEntry[], nextResult: ModelResult) =>
-    [
-      ...baseLogs,
-      ...(modelMaturity.level === 'stable'
-        ? []
-        : [{ level: 'warning', message: `${activeModel.name}当前为${modelMaturity.label}能力：${modelMaturity.description}` } satisfies RunLogEntry]),
-      ...(activeModel.limitations?.map((message) => ({ level: 'warning' as const, message })) ?? []),
-      ...(nextResult.warnings?.map((message) => ({ level: 'warning' as const, message })) ?? []),
-      { level: 'info', message: `${activeModel.name}运行完成。` } satisfies RunLogEntry,
-    ] satisfies RunLogEntry[]
-
-  const updateRunTask = (status: RunTaskStatus, phase: string, progress: number) => {
-    setRunStatus(phase)
-    setRunTask((current) =>
-      current
-        ? {
-            ...current,
-            status,
-            phase,
-            progress: Math.max(current.progress, progress),
-            elapsedMs: Date.now() - current.startedAt,
-          }
-        : current,
-    )
-  }
-
-  const cancelRunTask = () => {
-    if (!isModelRunning) return
-    runCancelRef.current = true
-    runWorkerRef.current?.terminate()
-    runWorkerRef.current = null
-    setIsModelRunning(false)
-    setRunStatus('')
-    setRunTask((current) =>
-      current
-        ? {
-            ...current,
-            status: 'cancelled',
-            phase: '任务已取消，参数面板已解锁。',
-            elapsedMs: Date.now() - current.startedAt,
-          }
-        : current,
-    )
-    setRunState({
-      result: null,
-      error: '',
-      logs: [{ level: 'warning', message: '用户已取消本次模型运行。' }],
-      signature: currentRunSignature,
-    })
-    setRunFailureDialog(null)
-    setWorkflowStep('variables')
-  }
-
-  const handleRunModel = () => {
-    if (!hasDataset || !hasActiveModel || isModelRunning) return
-    if (validationErrors.length > 0) {
-      setWorkflowStep('variables')
-      setIsVariableSetupOpen(true)
-      setRunState({
-        result: null,
-        error: `请先选择变量后再运行：${validationErrors[0]?.message ?? '变量设定未完成。'}`,
-        logs: validationErrors.map((issue) => ({ level: 'warning' as const, message: issue.message })),
-        signature: currentRunSignature,
-      })
-      return
-    }
-
-    setUploadError('')
-    setRunFailureDialog(null)
-    runWorkerRef.current?.terminate()
-    runCancelRef.current = false
-    const taskId = `${Date.now()}-${activeModel.id}`
-    const estimatedMs = estimateRunDuration(activeModel.id, rows.length)
-    setIsModelRunning(true)
-    setWorkflowStep('run')
-    setRunStatus('创建运行任务。')
-    setRunTask({
-      id: taskId,
-      modelName: activeModel.name,
-      status: 'preparing',
-      phase: '创建运行任务。',
-      progress: 6,
-      startedAt: Date.now(),
-      elapsedMs: 0,
-      estimatedMs,
-    })
-
-    const completeRun = (result: ModelResult, logs: RunLogEntry[]) => {
-      if (runCancelRef.current) return
-      setRunState({
-        result,
-        error: '',
-        logs: buildRunLogs(logs, result),
-        signature: currentRunSignature,
-      })
-      setRunTask((current) =>
-        current
-          ? {
-              ...current,
-              status: 'completed',
-              phase: '运行完成。',
-              progress: 100,
-              elapsedMs: Date.now() - current.startedAt,
-            }
-          : current,
-      )
-      setIsModelRunning(false)
-      setRunStatus('')
-      runWorkerRef.current = null
-      setRunFailureDialog(null)
-      setWorkflowStep('results')
-    }
-
-    const failRun = (message: string) => {
-      if (runCancelRef.current) return
-      setRunState({
-        result: null,
-        error: message,
-        logs: [{ level: 'warning', message }],
-        signature: currentRunSignature,
-      })
-      setRunTask((current) =>
-        current
-          ? {
-              ...current,
-              status: 'failed',
-              phase: message,
-              progress: current.progress,
-              elapsedMs: Date.now() - current.startedAt,
-            }
-          : current,
-      )
-      setIsModelRunning(false)
-      setRunStatus('')
-      runWorkerRef.current = null
-      setRunFailureDialog({
-        message,
-        modelName: activeModel.name,
-        formula: activeModel.getFormula(sanitizedConfig),
-      })
-      setWorkflowStep('variables')
-    }
-
-    const startBrowserWorker = (prefixLogs: RunLogEntry[] = []) => {
-      const worker = new Worker(new URL('./workers/modelRunner.ts', import.meta.url), { type: 'module' })
-      runWorkerRef.current = worker
-      worker.onmessage = (event: MessageEvent<ModelWorkerMessage>) => {
-        const message = event.data
-        if (message.taskId !== taskId || runCancelRef.current) return
-
-        if (message.type === 'progress') {
-          updateRunTask(
-            message.status,
-            (slowModelIds.has(activeModel.id) || activeModel.id.startsWith('spatial-')) && message.status === 'estimating' ? '估计模型中，慢模型可能需要更长时间。' : message.phase,
-            message.progress,
-          )
-          return
-        }
-
-        if (message.type === 'success') {
-          completeRun(message.result, [...prefixLogs, ...message.logs])
-          worker.terminate()
-          return
-        }
-
-        failRun(message.error)
-        worker.terminate()
-      }
-
-      worker.onerror = () => {
-        const message = '模型运行进程异常退出。'
-        failRun(message)
-        worker.terminate()
-      }
-
-      worker.postMessage({
-        taskId,
-        modelId: activeModel.id,
-        rows,
-        profiles,
-        config: sanitizedConfig,
-        prepConfig,
-        inference: activeModel.supportsInference ? effectiveInference : undefined,
-      })
-    }
-
-    startBrowserWorker()
-  }
-
-  const openVariableSetup = () => {
-    if (!hasDataset || !hasActiveModel || isModelRunning) return
-    setWorkflowStep('variables')
-    setIsVariableSetupOpen(true)
-  }
-
-  const saveVariableSetup = () => {
-    setWorkflowStep('variables')
-    setIsVariableSetupOpen(false)
-  }
-
-  const saveVariableSetupAndRun = () => {
-    if (validationErrors.length > 0) return
-    setIsVariableSetupOpen(false)
-    handleRunModel()
-  }
-
-  const persistSnapshots = (nextSnapshots: WorkbenchSnapshot[]) => {
-    setSnapshots(nextSnapshots)
-    try {
-      window.localStorage.setItem(snapshotStorageKey, JSON.stringify(nextSnapshots))
-    } catch {
-      setUploadError('快照保存失败：浏览器本地存储空间不足。')
-    }
-  }
-
-  const saveSnapshot = () => {
-    if (!hasDataset || !hasActiveModel) return
-
-    const createdAt = new Date().toISOString()
-    const snapshot: WorkbenchSnapshot = {
-      id: `${Date.now()}`,
-      createdAt,
-      updatedAt: createdAt,
-      label: `${activeModel.name} · ${fileName}`,
-      fileName,
-      rowCount: rows.length,
-      fieldCount: profiles.length,
-      modelId: activeModel.id,
-      modelName: activeModel.name,
-      modelShortName: activeModel.shortName || activeModel.name,
-      formula: activeModel.getFormula(sanitizedConfig),
-      rows,
-      dataRoles,
-      typeOverrides,
-      prepConfig,
-      inferenceConfig: effectiveInference,
-      modelConfig: sanitizedConfig,
-      result: result ?? undefined,
-      resultLogs: result ? (runLogs as RunLogEntry[]) : undefined,
-      savedResultAt: result ? createdAt : undefined,
-      favorite: false,
-      pinned: false,
-      tags: [],
-    }
-
-    persistSnapshots([snapshot, ...snapshots].slice(0, 30))
-  }
-
-  const restoreSnapshot = (snapshot: WorkbenchSnapshot) => {
-    setRows(snapshot.rows)
-    setFileName(snapshot.fileName)
-    setDataRoles(snapshot.dataRoles ?? emptyDataRoles)
-    setTypeOverrides(snapshot.typeOverrides)
-    setPrepConfig(snapshot.prepConfig)
-    setInferenceConfig(snapshot.inferenceConfig ?? { standardError: 'ols', clusterField: '' })
-    setActiveModelId(snapshot.modelId)
-    setDraftModelId(snapshot.modelId)
-    setModelConfig(snapshot.modelConfig)
-    if (snapshot.result) {
-      const snapshotProfiles = profileRows(snapshot.rows, snapshot.typeOverrides)
-      const snapshotModel = getModelPlugin(snapshot.modelId)
-      setRunState({
-        result: snapshot.result,
-        error: '',
-        logs: snapshot.resultLogs ?? [{ level: 'info', message: '已从历史记录恢复保存的模型结果。' }],
-        signature: createRunSignature({
-          modelId: snapshot.modelId,
-          fileName: snapshot.fileName,
-          rowCount: snapshot.rows.length,
-          fields: snapshotProfiles.map((profile) => [profile.name, profile.type, profile.missing, profile.unique]),
-          dataRoles: snapshot.dataRoles ?? emptyDataRoles,
-          prepConfig: snapshot.prepConfig,
-          inference: snapshotModel.supportsInference ? (snapshot.inferenceConfig ?? { standardError: 'ols', clusterField: '' }) : undefined,
-          config: snapshot.modelConfig,
-        }),
-      })
-    }
-    setUploadError('')
-    setSelectedSnapshotIds([])
-    setIsSnapshotManageMode(false)
-  }
-
-  const startRenameSnapshot = (snapshot: WorkbenchSnapshot) => {
-    setRenamingSnapshotId(snapshot.id)
-    setSnapshotNameDraft(snapshot.label)
-  }
-
-  const cancelRenameSnapshot = () => {
-    setRenamingSnapshotId('')
-    setSnapshotNameDraft('')
-  }
-
-  const commitRenameSnapshot = (snapshotId: string) => {
-    const nextLabel = snapshotNameDraft.trim()
-    if (!nextLabel) return
-
-    persistSnapshots(snapshots.map((snapshot) => (snapshot.id === snapshotId ? { ...snapshot, label: nextLabel, updatedAt: new Date().toISOString() } : snapshot)))
-    cancelRenameSnapshot()
-  }
-
-  const toggleSnapshotFlag = (snapshotId: string, flag: 'favorite' | 'pinned') => {
-    persistSnapshots(
-      snapshots.map((snapshot) =>
-        snapshot.id === snapshotId ? { ...snapshot, [flag]: !snapshot[flag], updatedAt: new Date().toISOString() } : snapshot,
-      ),
-    )
-  }
-
-  const toggleSnapshotSelection = (snapshotId: string) => {
-    setSelectedSnapshotIds((current) =>
-      current.includes(snapshotId) ? current.filter((id) => id !== snapshotId) : [...current, snapshotId],
-    )
-  }
-
-  const toggleAllSnapshots = () => {
-    setSelectedSnapshotIds((current) => {
-      const visibleIdSet = new Set(visibleSnapshotIds)
-      const allVisibleSelected = visibleSnapshotIds.length > 0 && visibleSnapshotIds.every((id) => current.includes(id))
-      if (allVisibleSelected) return current.filter((id) => !visibleIdSet.has(id))
-
-      return [...new Set([...current, ...visibleSnapshotIds])]
-    })
-  }
-
-  const setSelectedSnapshotFlag = (flag: 'favorite' | 'pinned', value: boolean) => {
-    if (selectedSnapshotIds.length === 0) return
-
-    persistSnapshots(
-      snapshots.map((snapshot) =>
-        selectedSnapshotIdSet.has(snapshot.id) ? { ...snapshot, [flag]: value, updatedAt: new Date().toISOString() } : snapshot,
-      ),
-    )
-  }
-
-  const deleteSelectedSnapshots = () => {
-    if (selectedSnapshotIds.length === 0) return
-    const confirmed = window.confirm(`确定删除选中的 ${selectedSnapshotIds.length} 条快照吗？`)
-    if (!confirmed) return
-
-    persistSnapshots(snapshots.filter((snapshot) => !selectedSnapshotIdSet.has(snapshot.id)))
-    setSelectedSnapshotIds([])
-    setIsSnapshotManageMode(false)
-  }
-
-  const deleteSnapshot = (snapshot: WorkbenchSnapshot) => {
-    const confirmed = window.confirm(`确定删除快照“${snapshot.label}”吗？此操作只会删除这条本地历史记录。`)
-    if (!confirmed) return
-
-    persistSnapshots(snapshots.filter((entry) => entry.id !== snapshot.id))
-    setSelectedSnapshotIds((current) => current.filter((id) => id !== snapshot.id))
-    if (renamingSnapshotId === snapshot.id) {
-      cancelRenameSnapshot()
-    }
-  }
-
-  const handleUpload = async (file: File | undefined) => {
-    if (!file) return
-    if (!hasActiveModel) {
-      setUploadError('')
-      setWorkflowStep('model')
-      return
-    }
-
-    const extension = file.name.split('.').pop()?.toLowerCase()
-
-    if (extension === 'xlsx') {
-      try {
-        const sheetRows = await readSheet(file)
-        openImportWizard(rowsFromSheet(sheetRows), file.name)
-      } catch {
-        setUploadError('XLSX 解析失败，请确认第一张工作表是标准二维表。')
-      }
-      return
-    }
-
-    Papa.parse<Row>(file, {
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: true,
-      complete: ({ data }) => {
-        openImportWizard(data.filter((row) => Object.keys(row).length > 0), file.name)
-      },
-      error: () => setUploadError('CSV 解析失败，请检查文件格式。'),
-    })
-  }
-
-  const toggleFeature = (name: string) => {
-    setModelConfig((current) => ({
-      ...current,
-      features: current.features.includes(name)
-        ? current.features.filter((feature) => feature !== name)
-        : [...current.features, name],
-    }))
-  }
-
-  const setSchemaParamColumn = (field: ParameterField, value: string) => {
-    setModelConfig((current) => {
-      const nextParams = { ...(current.params ?? {}), [field.id]: value }
-
-      if (field.role === 'target') {
-        activeModel.parameterSchema?.forEach((schemaField) => {
-          if (schemaField.kind === 'columns' && Array.isArray(nextParams[schemaField.id])) {
-            nextParams[schemaField.id] = (nextParams[schemaField.id] as string[]).filter((entry) => entry !== value)
-          }
-          if (schemaField.kind === 'column' && schemaField.id !== field.id && nextParams[schemaField.id] === value) {
-            nextParams[schemaField.id] = ''
-          }
-        })
-
-        return {
-          ...current,
-          target: field.id === 'target' ? value : current.target,
-          features: current.features.filter((entry) => entry !== value),
-          params: nextParams,
-        }
-      }
-
-      return {
-        ...current,
-        params: nextParams,
-      }
-    })
-  }
-
-  const setParamNumber = (paramId: string, value: number) => {
-    setModelConfig((current) => ({
-      ...current,
-      params: {
-        ...current.params,
-        [paramId]: value,
-      },
-    }))
-  }
-
-  const setParamValue = (paramId: string, value: ModelParamValue) => {
-    setModelConfig((current) => ({
-      ...current,
-      params: {
-        ...current.params,
-        [paramId]: value,
-      },
-    }))
-  }
-
-  const importSpatialWeights = async (paramId: string, file: File | undefined) => {
-    if (!file) return
-
-    try {
-      const text = await file.text()
-      const weights = parseSpatialWeightsText(text, file.name)
-      setParamValue(paramId, weights)
-      setUploadError('')
-    } catch (error) {
-      setUploadError(error instanceof Error ? error.message : '空间权重文件解析失败。')
-    }
-  }
-
-  const toggleParamColumn = (paramId: string, value: string, maxSelections?: number) => {
-    setModelConfig((current) => {
-      const currentValues = asParamArray(current.params?.[paramId])
-      const nextValues = currentValues.includes(value)
-        ? currentValues.filter((entry) => entry !== value)
-        : [...currentValues, value].slice(maxSelections ? -maxSelections : 0)
-      const nextParams = {
-        ...current.params,
-        [paramId]: nextValues,
-      }
-
-      if (!currentValues.includes(value)) {
-        if (paramId === 'features') {
-          nextParams.controls = asParamArray(nextParams.controls).filter((entry) => entry !== value)
-        }
-        if (paramId === 'controls') {
-          nextParams.features = asParamArray(nextParams.features).filter((entry) => entry !== value)
-        }
-      }
-
-      return {
-        ...current,
-        params: nextParams,
-      }
-    })
-  }
-
-  const updateColumnType = (column: string, type: ColumnType) => {
-    setTypeOverrides((current) => ({ ...current, [column]: type }))
-  }
 
   const downloadBlob = (content: BlobPart[], type: string, filename: string) => {
     const blob = new Blob(content, { type })
@@ -2185,268 +319,83 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  const getExportSelection = () => (selectedExportItemIds.length > 0 ? selectedExportItemIds : exportItems.map((item) => item.id))
-
-  const getSelectedResultTables = (selectedIds: string[]) =>
-    [...(result?.tables.filter((table) => selectedIds.includes(`table:${table.id}`)) ?? [])].sort((left, right) => {
-      if (left.id === 'coefficients') return -1
-      if (right.id === 'coefficients') return 1
-      return 0
-    })
-
-  const getCoefficientTable = () => result?.tables.find((table) => table.id === 'coefficients') ?? null
-
-  const buildStataRows = () => {
-    const coefficientTable = getCoefficientTable()
-    if (!coefficientTable) return []
+  const selectedExportItemSet = useMemo(() => new Set(selectedExportItemIds), [selectedExportItemIds])
+  const isPublicationPreviewEnabled = workspaceTab === 'publication' || (isExportModalOpen && selectedExportItemSet.has('custom-publication'))
+  const publicationWorkbench = usePublicationWorkbench({
+    result,
+    hasActiveModel,
+    activeModel: hasActiveModel ? activeModel : null,
+    sanitizedConfig,
+    dataRoles,
+    snapshots,
+    isPreviewEnabled: isPublicationPreviewEnabled,
+    getModelShortName: (modelId) => getModelPlugin(modelId).shortName,
+  })
+  const { state: publicationState, actions: publicationActions, builders: publicationBuilders } = publicationWorkbench
+  const customPublicationConfig = publicationState.config
+  const customPublicationTemplates = publicationState.templates
+  const customPublicationDefaultTemplateId = publicationState.defaultTemplateId
+  const publicationSources = publicationState.sources
+  const hasPublicationSources = publicationState.hasPublicationSources
+  const effectiveCustomPublicationSourceIds = publicationState.effectiveSourceIds
+  const customPublicationSelectedSet = publicationState.selectedSourceIds
+  const selectedPublicationSources = publicationState.selectedSources
+  const orderedCustomPublicationVariableOptions = publicationState.variableOptions
+  const customPublicationStatisticOptions = publicationState.statisticOptions
+  const hiddenCustomPublicationVariableSet = publicationState.hiddenVariableIds
+  const disabledCustomPublicationStatisticSet = publicationState.disabledStatisticIds
+  const isCustomPublicationDefaultTableMode = publicationState.isDefaultTableMode
+  const customPublicationPreviewTable = publicationState.previewTable
+  const customPublicationPreviewHtml = publicationState.previewHtml
+  const canExportCustomPublication = publicationState.canExport && !isExporting
+  const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
+  const exportItems = useMemo<ExportItem[]>(() => {
+    if (!result) return []
+    const hasCoefficientTable = result.tables.some((table) => table.id === 'coefficients')
 
     return [
-      ['Variable', 'Coef.', 'Std. err.', 'P>|t|'],
-      ...coefficientTable.rows.map((row) => [
-        String(row.term ?? row.variable ?? ''),
-        formatResultValue(row.coefficient ?? '', 'coefficient'),
-        row.stdError === undefined ? '' : formatResultValue(row.stdError, 'stdError'),
-        row.pValue === undefined ? '' : formatResultValue(row.pValue, 'pValue'),
-      ]),
+      { id: 'summary', label: '模型摘要', detail: `${result.summary.length} 个指标`, kind: 'summary' },
+      ...result.tables.map((table) => ({
+        id: `table:${table.id}`,
+        label: table.id === 'coefficients' ? '回归结果' : table.title,
+        detail: `${table.rows.length} 行 · ${table.columns.length} 列`,
+        kind: 'table' as const,
+      })),
+      ...(hasCoefficientTable
+        ? [
+            { id: 'stata', label: 'Stata 风格回归表', detail: 'Coef. / Std. err. / P>|t|', kind: 'report' as const },
+            { id: 'three-line', label: '论文三线表', detail: '系数星号与标准误', kind: 'report' as const },
+            ...(hasPublicationSources
+              ? [{ id: 'custom-publication', label: '自定义论文表', detail: `${publicationSources.length} 个可用结果源`, kind: 'report' as const }]
+              : []),
+          ]
+        : []),
+      { id: 'logs', label: '模型运行日志', detail: `${runLogs.length} 条日志`, kind: 'meta' },
+      { id: 'config', label: '参数配置 JSON', detail: '模型、字段、参数快照', kind: 'meta' },
     ]
-  }
+  }, [hasPublicationSources, publicationSources.length, result, runLogs.length])
 
-  function buildPublicationRegressionTable() {
-    if (!result || !hasActiveModel) return null
-    return buildBaselinePublicationTable({
-      result,
-      config: sanitizedConfig,
-      dimensions: dataRoles,
-      modelLabel: activeModel.shortName || activeModel.name,
-      methodLabel: activeModel.methodLabel || activeModel.shortName || activeModel.name,
-    })
-  }
+  const getExportSelection = () => (selectedExportItemIds.length > 0 ? selectedExportItemIds : exportItems.map((item) => item.id))
 
-  const buildPublicationRegressionRows = () => {
-    const table = buildPublicationRegressionTable()
-    return table ? publicationTableToRows(table, { includeNotes: true }) : []
-  }
-
-  function buildCustomPublicationTableFromConfig() {
-    if (isCustomPublicationDefaultTableMode) return buildPublicationRegressionTable()
-
-    const sources: CustomPublicationSource[] = selectedPublicationSources.map((source, index) => {
-        const draft = customPublicationConfig.columns[source.id]
-        return {
-          id: source.id,
-          result: source.result,
-          config: source.config,
-          dimensions: source.dimensions,
-          label: draft?.label || `(${index + 1})`,
-          group: draft?.group?.trim() || undefined,
-          modelLabel: draft?.modelLabel?.trim() || source.modelShortName || source.modelName,
-          modelShortName: source.modelShortName,
-          modelName: source.modelName,
-        }
-      })
-
-    return buildCustomPublicationTable({
-      title: customPublicationConfig.title,
-      note: customPublicationConfig.note,
-      sources,
-      variableOrder: orderedCustomPublicationVariableOptions
-        .filter((option) => !hiddenCustomPublicationVariableSet.has(option.id))
-        .map((option) => option.id),
-      enabledStatisticIds: customPublicationStatisticOptions
-        .filter((option) => !disabledCustomPublicationStatisticSet.has(option.id))
-        .map((option) => option.id),
-      variableLabels: customPublicationConfig.variableLabels,
-      statisticLabels: customPublicationConfig.statisticLabels,
-      formatRules: customPublicationConfig.formatRules,
-    })
-  }
-
-  const customPublicationAsCustom = (current: CustomPublicationConfig): CustomPublicationConfig => ({
-    ...current,
-    mode: 'custom',
-    selectedSourceIds: current.selectedSourceIds.length > 0 ? current.selectedSourceIds : defaultCustomPublicationSourceIds,
-  })
-
-  const startCustomPublicationEditing = () => {
-    setCustomPublicationConfig((current) => customPublicationAsCustom(current))
-  }
-
-  const updateCustomPublicationConfig = (patch: Partial<Pick<CustomPublicationConfig, 'title' | 'note'>>) => {
-    setCustomPublicationConfig((current) => ({ ...customPublicationAsCustom(current), ...patch }))
-  }
-
-  const updateCustomPublicationFormatRules = (patch: Partial<CustomPublicationFormatRules>) => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const nextFormatRules = {
-        ...customCurrent.formatRules,
-        ...patch,
-        starLevels: patch.starLevels ? patch.starLevels : customCurrent.formatRules.starLevels,
-      }
-      const currentAutoNote = buildCustomPublicationNote(customCurrent.formatRules)
-      return {
-        ...customCurrent,
-        formatRules: nextFormatRules,
-        note: customCurrent.note.trim() === '' || customCurrent.note === currentAutoNote ? buildCustomPublicationNote(nextFormatRules) : customCurrent.note,
-      }
-    })
-  }
-
-  const toggleCustomPublicationSource = (sourceId: string) => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const baseSelected = customCurrent.selectedSourceIds.length > 0 ? customCurrent.selectedSourceIds : effectiveCustomPublicationSourceIds
-      const selected = baseSelected.includes(sourceId)
-        ? baseSelected.filter((id) => id !== sourceId)
-        : [...baseSelected, sourceId]
-      return { ...customCurrent, selectedSourceIds: selected }
-    })
-  }
-
-  const updateCustomPublicationColumn = (sourceId: string, patch: Partial<Omit<CustomPublicationColumnDraft, 'id'>>) => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      return {
-      ...customCurrent,
-      columns: {
-        ...customCurrent.columns,
-        [sourceId]: {
-          id: sourceId,
-          label: customCurrent.columns[sourceId]?.label ?? `(${Object.keys(customCurrent.columns).length + 1})`,
-          group: customCurrent.columns[sourceId]?.group ?? '',
-          modelLabel: customCurrent.columns[sourceId]?.modelLabel ?? '',
-          ...patch,
-        },
-      },
-    }
-    })
-  }
-
-  const moveCustomPublicationColumn = (sourceId: string, direction: 'up' | 'down') => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const availableIds = selectedPublicationSources.map((source) => source.id)
-      const orderedIds = [
-        ...customCurrent.columnOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !customCurrent.columnOrder.includes(id)),
-      ]
-      const index = orderedIds.indexOf(sourceId)
-      if (index === -1) return customCurrent
-      const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
-      return { ...customCurrent, columnOrder: moveOrderedItem(orderedIds, sourceId, nextIndex) }
-    })
-  }
-
-  const updateCustomPublicationVariableLabel = (variableId: string, label: string) => {
-    setCustomPublicationConfig((current) => ({
-      ...customPublicationAsCustom(current),
-      variableLabels: {
-        ...current.variableLabels,
-        [variableId]: label,
-      },
-    }))
-  }
-
-  const toggleCustomPublicationVariable = (variableId: string) => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const hidden = customCurrent.hiddenVariableIds.includes(variableId)
-        ? customCurrent.hiddenVariableIds.filter((id) => id !== variableId)
-        : [...customCurrent.hiddenVariableIds, variableId]
-      return { ...customCurrent, hiddenVariableIds: hidden }
-    })
-  }
-
-  const moveCustomPublicationVariable = (variableId: string, direction: 'up' | 'down') => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const availableIds = customPublicationVariableOptions.map((option) => option.id)
-      const orderedIds = [
-        ...customCurrent.variableOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !customCurrent.variableOrder.includes(id)),
-      ]
-      const index = orderedIds.indexOf(variableId)
-      if (index === -1) return customCurrent
-      const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
-      return { ...customCurrent, variableOrder: moveOrderedItem(orderedIds, variableId, nextIndex) }
-    })
-  }
-
-  const moveCustomPublicationStatistic = (statisticId: string, direction: 'up' | 'down') => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const availableIds = customPublicationStatisticOptions.map((option) => option.id)
-      const orderedIds = [
-        ...customCurrent.statisticOrder.filter((id) => availableIds.includes(id)),
-        ...availableIds.filter((id) => !customCurrent.statisticOrder.includes(id)),
-      ]
-      const index = orderedIds.indexOf(statisticId)
-      if (index === -1) return customCurrent
-      const nextIndex = direction === 'up' ? index - 1 : index + 1
-      if (nextIndex < 0 || nextIndex >= orderedIds.length) return customCurrent
-      return { ...customCurrent, statisticOrder: moveOrderedItem(orderedIds, statisticId, nextIndex) }
-    })
-  }
-
-  const updateCustomPublicationStatisticLabel = (statisticId: string, label: string) => {
-    setCustomPublicationConfig((current) => ({
-      ...customPublicationAsCustom(current),
-      statisticLabels: {
-        ...current.statisticLabels,
-        [statisticId]: label,
-      },
-    }))
-  }
-
-  const toggleCustomPublicationStatistic = (statisticId: string) => {
-    setCustomPublicationConfig((current) => {
-      const customCurrent = customPublicationAsCustom(current)
-      const disabled = customCurrent.disabledStatisticIds.includes(statisticId)
-        ? customCurrent.disabledStatisticIds.filter((id) => id !== statisticId)
-        : [...customCurrent.disabledStatisticIds, statisticId]
-      return { ...customCurrent, disabledStatisticIds: disabled }
-    })
-  }
-
-  const resetCustomPublicationOrdering = () => {
-    setCustomPublicationConfig((current) => ({
-      ...customPublicationAsCustom(current),
-      columnOrder: [],
-      variableOrder: [],
-      statisticOrder: [],
-    }))
-  }
-
-  const setAllCustomPublicationVariables = (visible: boolean) => {
-    setCustomPublicationConfig((current) => ({
-      ...customPublicationAsCustom(current),
-      hiddenVariableIds: visible ? [] : orderedCustomPublicationVariableOptions.map((option) => option.id),
-    }))
-  }
-
-  const setAllCustomPublicationStatistics = (enabled: boolean) => {
-    setCustomPublicationConfig((current) => ({
-      ...customPublicationAsCustom(current),
-      disabledStatisticIds: enabled ? [] : customPublicationStatisticOptions.map((option) => option.id),
-    }))
-  }
-
-  const saveCustomPublicationTemplate = () => {
-    const name = customPublicationConfig.title.trim() || `自定义论文表模板 ${customPublicationTemplates.length + 1}`
-    const template: CustomPublicationTemplate = {
-      id: crypto.randomUUID(),
-      name,
-      updatedAt: new Date().toISOString(),
-      config: structuredClone({ ...customPublicationAsCustom(customPublicationConfig), mode: 'custom' }),
-    }
-    setCustomPublicationTemplates((current) => [template, ...current.filter((entry) => entry.name !== name)])
-  }
-
-  const restoreCustomPublicationDefaults = () => {
-    setCustomPublicationConfig(defaultCustomPublicationConfig())
-  }
+  const buildPublicationRegressionTable = publicationBuilders.buildBaselinePublicationTable
+  const buildCustomPublicationTableFromConfig = publicationBuilders.buildCustomPublicationTable
+  const startCustomPublicationEditing = publicationActions.startCustom
+  const updateCustomPublicationConfig = publicationActions.updateText
+  const updateCustomPublicationFormatRules = publicationActions.updateFormatRules
+  const toggleCustomPublicationSource = publicationActions.toggleSource
+  const updateCustomPublicationColumn = publicationActions.updateColumn
+  const moveCustomPublicationColumn = publicationActions.moveColumn
+  const updateCustomPublicationVariableLabel = publicationActions.updateVariableLabel
+  const toggleCustomPublicationVariable = publicationActions.toggleVariable
+  const moveCustomPublicationVariable = publicationActions.moveVariable
+  const moveCustomPublicationStatistic = publicationActions.moveStatistic
+  const updateCustomPublicationStatisticLabel = publicationActions.updateStatisticLabel
+  const toggleCustomPublicationStatistic = publicationActions.toggleStatistic
+  const resetCustomPublicationOrdering = publicationActions.resetOrdering
+  const setAllCustomPublicationVariables = publicationActions.setAllVariables
+  const setAllCustomPublicationStatistics = publicationActions.setAllStatistics
+  const saveCustomPublicationTemplate = publicationActions.saveTemplate
+  const restoreCustomPublicationDefaults = publicationActions.restoreDefaults
 
   const openPublicationWorkbench = () => {
     setExportError('')
@@ -2459,391 +408,59 @@ function App() {
     setWorkspaceTab('workbench')
   }
 
-  const applyCustomPublicationTemplate = (templateId: string) => {
-    const template = customPublicationTemplates.find((entry) => entry.id === templateId)
-    if (!template) return
-    setCustomPublicationConfig(customPublicationAsCustom({ ...normalizeCustomPublicationConfig(structuredClone(template.config)), mode: 'custom' }))
-  }
+  const applyCustomPublicationTemplate = publicationActions.applyTemplate
+  const applyDefaultCustomPublicationTemplate = publicationActions.applyDefaultTemplate
+  const duplicateCustomPublicationTemplate = publicationActions.duplicateTemplate
+  const renameCustomPublicationTemplate = publicationActions.renameTemplate
+  const deleteCustomPublicationTemplate = publicationActions.deleteTemplate
+  const reorderCustomPublicationByDrop = publicationActions.dropItem
 
-  const applyDefaultCustomPublicationTemplate = () => {
-    if (customPublicationDefaultTemplateId) applyCustomPublicationTemplate(customPublicationDefaultTemplateId)
-  }
-
-  const duplicateCustomPublicationTemplate = (templateId: string) => {
-    const template = customPublicationTemplates.find((entry) => entry.id === templateId)
-    if (!template) return
-    setCustomPublicationTemplates((current) => [
-      {
-        ...template,
-        id: crypto.randomUUID(),
-        name: `${template.name}（副本）`,
-        updatedAt: new Date().toISOString(),
+  const buildReportExportContext = (selectedIds = getExportSelection()) => {
+    if (!result || !hasActiveModel) return null
+    return {
+      result,
+      config: sanitizedConfig,
+      selectedIds,
+      model: {
+        id: activeModel.id,
+        name: activeModel.name,
+        shortName: activeModel.shortName,
+        formula: activeModel.getFormula(sanitizedConfig),
+        downloadName: activeModel.downloadName,
       },
-      ...current,
-    ])
-  }
-
-  const renameCustomPublicationTemplate = (templateId: string, name: string) => {
-    setCustomPublicationTemplates((current) =>
-      current.map((entry) => (entry.id === templateId ? { ...entry, name, updatedAt: new Date().toISOString() } : entry)),
-    )
-  }
-
-  const deleteCustomPublicationTemplate = (templateId: string) => {
-    setCustomPublicationTemplates((current) => current.filter((entry) => entry.id !== templateId))
-    if (customPublicationDefaultTemplateId === templateId) setCustomPublicationDefaultTemplateId('')
-  }
-
-  const reorderCustomPublicationByDrop = (kind: CustomPublicationDragItem['kind'], targetId: string) => {
-    if (!draggingPublicationItem || draggingPublicationItem.kind !== kind || draggingPublicationItem.id === targetId) return
-    if (kind === 'column') {
-      setCustomPublicationConfig((current) => {
-        const customCurrent = customPublicationAsCustom(current)
-        const availableIds = selectedPublicationSources.map((source) => source.id)
-        const orderedIds = [
-          ...customCurrent.columnOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !customCurrent.columnOrder.includes(id)),
-        ]
-        return { ...customCurrent, columnOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
-      })
+      maturity: {
+        label: modelMaturity.label,
+        description: modelMaturity.description,
+      },
+      runLogs,
+      baselinePublicationTable: buildPublicationRegressionTable(),
+      customPublicationTable: selectedIds.includes('custom-publication') ? buildCustomPublicationTableFromConfig() : null,
     }
-    if (kind === 'variable') {
-      setCustomPublicationConfig((current) => {
-        const customCurrent = customPublicationAsCustom(current)
-        const availableIds = orderedCustomPublicationVariableOptions.map((option) => option.id)
-        const orderedIds = [
-          ...customCurrent.variableOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !customCurrent.variableOrder.includes(id)),
-        ]
-        return { ...customCurrent, variableOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
-      })
-    }
-    if (kind === 'statistic') {
-      setCustomPublicationConfig((current) => {
-        const customCurrent = customPublicationAsCustom(current)
-        const availableIds = customPublicationStatisticOptions.map((option) => option.id)
-        const orderedIds = [
-          ...customCurrent.statisticOrder.filter((id) => availableIds.includes(id)),
-          ...availableIds.filter((id) => !customCurrent.statisticOrder.includes(id)),
-        ]
-        return { ...customCurrent, statisticOrder: moveOrderedItem(orderedIds, draggingPublicationItem.id, orderedIds.indexOf(targetId)) }
-      })
-    }
-    setDraggingPublicationItem(null)
-  }
-
-  const buildStataStyleTable = (selectedIds = getExportSelection()) => {
-    if (!result || !selectedIds.includes('stata')) return ''
-    const coefficientTable = result.tables.find((table) => table.id === 'coefficients')
-    if (!coefficientTable) return ''
-    const rows = coefficientTable.rows.map((row) => {
-      const term = String(row.term ?? row.variable ?? '')
-      const coefficient = formatResultValue(row.coefficient as string | number, 'coefficient')
-      const stdError = row.stdError === undefined ? '' : `(${formatResultValue(row.stdError as string | number, 'stdError')})`
-      const pValue = row.pValue === undefined ? '' : formatResultValue(row.pValue as string | number, 'pValue')
-      return `<tr><td>${escapeXml(term)}</td><td>${escapeXml(coefficient)}</td><td>${escapeXml(stdError)}</td><td>${escapeXml(pValue)}</td></tr>`
-    })
-
-    return `<h2>Stata 风格回归表</h2><table><thead><tr><th>Variable</th><th>Coef.</th><th>Std. err.</th><th>P>|t|</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
-  }
-
-  const publicationTableCss = `
-.publication-block{margin:18px 0 24px}
-.publication-table{width:100%;border-collapse:collapse;table-layout:auto;margin:0;font-family:"Times New Roman","Noto Serif SC",serif;color:#000;background:#fff}
-.three-line th,.three-line td{border:0;padding:2px 6px;font-size:12px;line-height:1.28;text-align:center;vertical-align:middle;background:#fff}
-.three-line .row-label{text-align:left;white-space:nowrap}
-.three-line .is-empty-label{color:transparent}
-.three-line tr.row-role-title th{border-top:2px solid #000;border-bottom:2px solid #000;font-size:16px;font-weight:700;line-height:1.2;text-align:center;padding:3px 6px}
-.three-line tr.row-role-model th,.three-line tr.row-role-group th{font-weight:400}
-.three-line tr.is-last-header th{border-bottom:1.5px solid #000}
-.three-line tr.row-role-coefficient td:first-child{font-weight:600}
-.three-line tr.row-role-statistic td{padding-top:0;color:#000}
-.three-line tr:last-child td,.three-line tr:last-child th{border-bottom:2px solid #000}
-.three-line .is-centered{text-align:center}
-.note{margin-top:4px;padding-top:0;border-top:0;font-size:12px;line-height:1.35;color:#000;font-family:"Times New Roman","Noto Serif SC",serif}
-`
-
-  function buildPublicationTableHtml(table: PublicationTable) {
-    const mergeMap = new Map(table.merges.map((merge) => [`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan]))
-    const hiddenCells = new Set<string>()
-    table.merges.forEach((merge) => {
-      for (let offset = 1; offset < merge.columnSpan; offset += 1) hiddenCells.add(`${merge.rowIndex}:${merge.columnIndex + offset}`)
-    })
-    const rows = table.rows
-      .map((row, rowIndex) => {
-        const values = [row.label, ...row.values]
-        const nextRole = table.rows[rowIndex + 1]?.role
-        const isHeaderEnd = (row.role === 'header' || row.role === 'columnIndex') && nextRole !== 'header' && nextRole !== 'columnIndex'
-        const rowClassNames = [`row-role-${row.role}`, isHeaderEnd ? 'is-last-header' : ''].filter(Boolean).join(' ')
-        const cells = values
-          .map((cell, cellIndex) => {
-            if (hiddenCells.has(`${rowIndex}:${cellIndex}`)) return ''
-            const tag = row.role === 'title' || row.role === 'model' || row.role === 'group' || row.role === 'header' || row.role === 'columnIndex' ? 'th' : 'td'
-            const classNames = [
-              cellIndex === 0 ? 'row-label' : '',
-              `row-role-${row.role}`,
-              row.role === 'statistic' && cellIndex === 0 ? 'is-empty-label' : '',
-              cellIndex > 0 ? 'is-centered' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')
-            const span = mergeMap.get(`${rowIndex}:${cellIndex}`)
-            return `<${tag}${classNames ? ` class="${classNames}"` : ''}${span ? ` colspan="${span}"` : ''}>${escapeXml(cell)}</${tag}>`
-          })
-          .join('')
-        return `<tr class="${rowClassNames}">${cells}</tr>`
-      })
-      .join('')
-
-    const note = table.notes.join(' ')
-    return `<figure class="publication-block"><table class="three-line publication-table"><tbody>${rows}</tbody></table><figcaption class="note">${escapeXml(note)}</figcaption></figure>`
-  }
-
-  const buildThreeLineTable = (selectedIds = getExportSelection()) => {
-    if (!result || !selectedIds.includes('three-line')) return ''
-    const table = buildPublicationRegressionTable()
-    return table ? buildPublicationTableHtml(table) : ''
-  }
-
-  const buildHtmlReport = (selectedIds = getExportSelection()) => {
-    if (!result || !hasActiveModel) return ''
-    const tableHtml = getSelectedResultTables(selectedIds)
-      .map(
-        (table) =>
-          `<h2>${escapeXml(table.title)}</h2><table><thead><tr>${table.columns
-            .map((column) => `<th>${escapeXml(columnLabels[column] ?? column)}</th>`)
-            .join('')}</tr></thead><tbody>${table.rows
-            .map((row) => `<tr>${table.columns.map((column) => `<td>${escapeXml(formatResultValue(row[column] ?? '', column))}</td>`).join('')}</tr>`)
-            .join('')}</tbody></table>`,
-      )
-      .join('')
-    const summaryRows = selectedIds.includes('summary')
-      ? `<h2>模型摘要</h2><table>${result.summary.map((metric) => `<tr><td>${escapeXml(metric.label)}</td><td>${escapeXml(formatMetricValue(metric))}</td></tr>`).join('')}</table>`
-      : ''
-    const logRows = selectedIds.includes('logs')
-      ? `<h2>运行日志</h2><table><thead><tr><th>Level</th><th>Message</th></tr></thead><tbody>${runLogs.map((entry) => `<tr><td>${escapeXml(entry.level)}</td><td>${escapeXml(entry.message)}</td></tr>`).join('')}</tbody></table>`
-      : ''
-    const configBlock = selectedIds.includes('config') ? `<h2>参数配置 JSON</h2><pre>${escapeXml(JSON.stringify(sanitizedConfig, null, 2))}</pre>` : ''
-
-    const customPublicationHtml =
-      selectedIds.includes('custom-publication')
-        ? (() => {
-            const table = buildCustomPublicationTableFromConfig()
-            return table ? buildPublicationTableHtml(table) : ''
-          })()
-        : ''
-
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(activeModel.name)} 报告</title><style>
-body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28px;line-height:1.65}h1{font-size:22px}h2{font-size:16px;margin:22px 0 8px}table{border-collapse:collapse;width:100%;margin:8px 0 14px}th,td{border:1px solid #d9ddd6;padding:6px 8px;font-size:12px;text-align:left}th{background:#f4f6f2}code{white-space:pre-wrap}${publicationTableCss}
-</style></head><body><h1>${escapeXml(activeModel.name)}（${escapeXml(activeModel.shortName)}）</h1><p><strong>公式：</strong><code>${escapeXml(activeModel.getFormula(sanitizedConfig))}</code></p><p><strong>可信度：</strong>${escapeXml(modelMaturity.label)} · ${escapeXml(modelMaturity.description)}</p>${summaryRows}${buildStataStyleTable(selectedIds)}${buildThreeLineTable(selectedIds)}${customPublicationHtml}${tableHtml}${logRows}${configBlock}</body></html>`
-  }
-
-  const excelCell = (
-    value: string | number,
-    style: Partial<Extract<Cell, { value?: unknown }>> = {},
-  ): Cell => ({
-    value,
-    type: typeof value === 'number' ? Number : String,
-    align: typeof value === 'number' ? 'right' : 'left',
-    ...style,
-  })
-
-  const publicationSheetData = (table: PublicationTable): SheetData => {
-    const rows = publicationTableToRows(table, { includeNotes: true })
-    const hiddenCells = new Set<string>()
-    const mergeStarts = new Map<string, number>()
-
-    table.merges.forEach((merge) => {
-      mergeStarts.set(`${merge.rowIndex}:${merge.columnIndex}`, merge.columnSpan)
-      for (let offset = 1; offset < merge.columnSpan; offset += 1) hiddenCells.add(`${merge.rowIndex}:${merge.columnIndex + offset}`)
-    })
-
-    return rows.map((row, rowIndex) =>
-      row.map((cell, columnIndex) => {
-        if (hiddenCells.has(`${rowIndex}:${columnIndex}`)) return null
-        const role = rowIndex < table.rows.length ? table.rows[rowIndex].role : 'note'
-        const nextRole = table.rows[rowIndex + 1]?.role
-        const isHeader = role === 'title' || role === 'model' || role === 'group' || role === 'header' || role === 'columnIndex'
-        const isStatistic = role === 'statistic'
-        const isNote = role === 'note'
-        const isTitleRow = role === 'title'
-        const isHeaderEnd = (role === 'header' || role === 'columnIndex') && nextRole !== 'header' && nextRole !== 'columnIndex'
-        const isLastTableRow = rowIndex === table.rows.length - 1
-        const isCoefficientLabel = role === 'coefficient' && columnIndex === 0
-        return excelCell(cell, {
-          fontFamily: 'Times New Roman',
-          fontSize: isTitleRow ? 14 : isNote ? 11 : 12,
-          fontWeight: isTitleRow || isHeader || isCoefficientLabel ? 'bold' : undefined,
-          align: isTitleRow || role === 'model' || role === 'group' || columnIndex > 0 ? 'center' : 'left',
-          wrap: true,
-          columnSpan: mergeStarts.get(`${rowIndex}:${columnIndex}`),
-          backgroundColor: '#ffffff',
-          topBorderStyle: isTitleRow ? 'medium' : undefined,
-          bottomBorderStyle: isTitleRow || isLastTableRow ? 'medium' : isHeaderEnd ? 'thin' : undefined,
-          leftBorderStyle: undefined,
-          rightBorderStyle: undefined,
-          textColor: '#000000',
-          alignVertical: 'center',
-          height: isTitleRow ? 22 : role === 'model' || role === 'group' || isHeaderEnd ? 17 : isNote ? 18 : isStatistic ? 15 : 18,
-        })
-      }),
-    )
-  }
-
-  const buildExcelBlob = async (selectedIds = getExportSelection()) => {
-    if (!result || !hasActiveModel) return new Blob([])
-    const worksheetNames = new Set<string>()
-    const worksheetName = (name: string) => {
-      const base = name.replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31) || 'Sheet'
-      let nextName = base
-      let index = 2
-      while (worksheetNames.has(nextName)) {
-        const suffix = ` ${index}`
-        nextName = `${base.slice(0, 31 - suffix.length)}${suffix}`
-        index += 1
-      }
-      worksheetNames.add(nextName)
-      return nextName
-    }
-    const asSheetData = (rows: Array<Array<string | number>>): SheetData =>
-      rows.map((row, rowIndex) =>
-        row.map((cell, columnIndex) => {
-          const isHeader = rowIndex === 0
-          return excelCell(cell, {
-            fontFamily: 'Times New Roman',
-            fontSize: 11,
-            fontWeight: isHeader ? 'bold' : undefined,
-            align: columnIndex > 0 ? 'center' : 'left',
-            wrap: true,
-          })
-        }),
-      )
-    const tableRows = (table: ModelResult['tables'][number]) => [
-      table.columns.map((column) => columnLabels[column] ?? column),
-      ...table.rows.map((row) => table.columns.map((column) => formatResultValue(row[column] ?? '', column))),
-    ]
-    const sheets: Sheet<Blob>[] = []
-    const appendSheet = (name: string, rows: Array<Array<string | number>>) => {
-      const columnCount = Math.max(...rows.map((row) => row.length), 1)
-      sheets.push({
-        sheet: worksheetName(name),
-        data: asSheetData(rows),
-        columns: Array.from({ length: columnCount }, (_, columnIndex) => ({ width: columnIndex === 0 ? 18 : 13 })),
-        showGridLines: true,
-      })
-    }
-    const appendPublicationSheet = (table: PublicationTable) => {
-      const columnCount = table.columns.length + 1
-      const labelWidth = Math.min(26, Math.max(18, Math.max(...table.rows.map((row) => row.label.length), 10) * 1.45))
-      const valueWidth = Math.min(
-        18,
-        Math.max(
-          11,
-          ...table.rows.flatMap((row) => row.values.map((value) => String(value ?? '').length * 1.18)),
-        ),
-      )
-      sheets.push({
-        sheet: worksheetName(table.sheetName),
-        data: publicationSheetData(table),
-        columns: Array.from({ length: columnCount }, (_, columnIndex) => ({ width: columnIndex === 0 ? labelWidth : valueWidth })),
-        showGridLines: false,
-      })
-    }
-
-    if (selectedIds.includes('summary')) appendSheet('模型摘要', [['Metric', 'Value'], ...result.summary.map((metric) => [metric.label, formatMetricValue(metric)])])
-    getSelectedResultTables(selectedIds).forEach((table) => appendSheet(table.id === 'coefficients' ? '回归结果' : table.title, tableRows(table)))
-    if (selectedIds.includes('stata')) appendSheet('Stata回归表', buildStataRows())
-    if (selectedIds.includes('three-line')) {
-      const publicationTable = buildPublicationRegressionTable()
-      if (publicationTable) appendPublicationSheet(publicationTable)
-    }
-    if (selectedIds.includes('custom-publication')) {
-      const publicationTable = buildCustomPublicationTableFromConfig()
-      if (publicationTable) appendPublicationSheet(publicationTable)
-    }
-    if (selectedIds.includes('logs')) appendSheet('运行日志', [['Level', 'Message'], ...runLogs.map((entry) => [entry.level, entry.message])])
-    if (selectedIds.includes('config')) appendSheet('参数配置', [['JSON'], [JSON.stringify(sanitizedConfig, null, 2)]])
-
-    return writeXlsxFile(sheets, { fontFamily: 'Times New Roman', fontSize: 11 }).toBlob()
-  }
-
-  const buildCsvReport = (selectedIds = getExportSelection()) => {
-    if (!result || !hasActiveModel) return ''
-    const lines: string[] = []
-    if (selectedIds.includes('summary')) {
-      lines.push('模型摘要', csvLine(['字段', '值']), csvLine(['Model', activeModel.getFormula(sanitizedConfig)]))
-      result.summary.forEach((metric) => lines.push(csvLine([metric.label, formatMetricValue(metric)])))
-    }
-    getSelectedResultTables(selectedIds).forEach((table) => {
-      lines.push('', table.id === 'coefficients' ? '回归结果' : table.title, csvLine(table.columns.map((column) => columnLabels[column] ?? column)))
-      table.rows.forEach((row) => lines.push(csvLine(table.columns.map((column) => formatResultValue(row[column] ?? '', column)))))
-    })
-    if (selectedIds.includes('stata')) {
-      lines.push('', 'Stata 风格回归表', ...buildStataRows().map((row) => csvLine(row)))
-    }
-    if (selectedIds.includes('three-line')) {
-      if (lines.length > 0) lines.push('')
-      const publicationRows = buildPublicationRegressionRows()
-      const note = String(publicationRows.at(-1)?.[0] ?? '')
-      lines.push(...publicationRows.slice(0, -1).map((row) => csvLine(row)), '', note)
-    }
-    if (selectedIds.includes('custom-publication')) {
-      const publicationTable = buildCustomPublicationTableFromConfig()
-      if (publicationTable) {
-        if (lines.length > 0) lines.push('')
-        const publicationRows = publicationTableToRows(publicationTable, { includeNotes: true })
-        const note = String(publicationRows.at(-1)?.[0] ?? '')
-        lines.push(...publicationRows.slice(0, -1).map((row) => csvLine(row)), '', note)
-      }
-    }
-    if (selectedIds.includes('logs')) {
-      lines.push('', '运行日志', csvLine(['Level', 'Message']), ...runLogs.map((entry) => csvLine([entry.level, entry.message])))
-    }
-    if (selectedIds.includes('config')) {
-      lines.push('', '参数配置 JSON', csvLine(['JSON']), csvLine([JSON.stringify(sanitizedConfig, null, 2)]))
-    }
-    return lines.join('\n')
   }
 
   const exportReport = async (format: ExportFormat = exportFormat, selectedIds = getExportSelection()) => {
     if (!result || !hasActiveModel) return
     if (selectedIds.length === 0) return
+    const context = buildReportExportContext(selectedIds)
+    if (!context) return
+
     if (format === 'excel') {
-      downloadBlob([await buildExcelBlob(selectedIds)], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${activeModel.id}-report.xlsx`)
+      downloadBlob([await buildExcelBlob(context)], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${activeModel.id}-report.xlsx`)
       return
     }
     if (format === 'html') {
-      downloadBlob([buildHtmlReport(selectedIds)], 'text/html;charset=utf-8', `${activeModel.id}-report.html`)
+      downloadBlob([buildHtmlReport(context)], 'text/html;charset=utf-8', `${activeModel.id}-report.html`)
       return
     }
     if (format === 'word') {
-      downloadBlob(['\uFEFF', buildHtmlReport(selectedIds)], 'application/msword;charset=utf-8', `${activeModel.id}-report.doc`)
+      downloadBlob(['\uFEFF', buildHtmlReport(context)], 'application/msword;charset=utf-8', `${activeModel.id}-report.doc`)
       return
     }
     if (format === 'json') {
-      downloadBlob(
-        [
-          JSON.stringify(
-            {
-              modelId: activeModel.id,
-              formula: activeModel.getFormula(sanitizedConfig),
-              selected: selectedIds,
-              config: selectedIds.includes('config') ? sanitizedConfig : undefined,
-              summary: selectedIds.includes('summary') ? result.summary : undefined,
-              tables: getSelectedResultTables(selectedIds),
-              customPublication: selectedIds.includes('custom-publication') ? buildCustomPublicationTableFromConfig() : undefined,
-              logs: selectedIds.includes('logs') ? runLogs : undefined,
-            },
-            null,
-            2,
-          ),
-        ],
-        'application/json;charset=utf-8',
-        `${activeModel.id}-export.json`,
-      )
+      downloadBlob([buildJsonReport(context)], 'application/json;charset=utf-8', `${activeModel.id}-export.json`)
       return
     }
-    downloadBlob(['\uFEFF', buildCsvReport(selectedIds)], 'text/csv;charset=utf-8', activeModel.downloadName)
+    downloadBlob(['\uFEFF', buildCsvReport(context)], 'text/csv;charset=utf-8', activeModel.downloadName)
   }
 
   const openExportDialog = () => {
@@ -3593,339 +1210,72 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
     </div>
   )
 
-  const visiblePublicationVariableCount = orderedCustomPublicationVariableOptions.filter((option) => !hiddenCustomPublicationVariableSet.has(option.id)).length
-  const enabledPublicationStatisticCount = customPublicationStatisticOptions.filter((option) => !disabledCustomPublicationStatisticSet.has(option.id)).length
-  const customPublicationDisplayTitle = customPublicationPreviewTable?.title ?? customPublicationConfig.title
-  const publicationTemplateStatus = matchedCustomPublicationTemplate
-    ? `当前使用模板：${matchedCustomPublicationTemplate.name}`
-    : isCustomPublicationDefaultTableMode
-      ? '默认同款：当前结果论文三线表'
-      : customPublicationDefaultTemplateId
-      ? '当前为草稿状态，可随时应用默认模板'
-      : '当前为未命名草稿'
+  const visiblePublicationVariableCount = publicationState.visibleVariableCount
+  const enabledPublicationStatisticCount = publicationState.enabledStatisticCount
+  const customPublicationDisplayTitle = publicationState.displayTitle
+  const publicationTemplateStatus = publicationState.templateStatus
 
   const renderCustomPublicationWorkbench = () => (
-    <section className="publication-workbench">
-      <div className="publication-workbench__editor">
-        <section className="publication-workbench__hero">
-          <div>
-            <span className="panel__label">Paper Table Workspace</span>
-            <h2>{customPublicationDisplayTitle}</h2>
-            <p>把来源列、变量行、统计行和注释整理成一张适合 Excel、Word 和 HTML 导出的论文表。</p>
-          </div>
-          <div className="publication-workbench__hero-actions">
-            <button className="secondary-button is-subtle" type="button" onClick={closePublicationWorkbench}>
-              返回建模
-            </button>
-            <button className="primary-button" type="button" onClick={() => exportCustomPublicationOnly('excel')} disabled={!canExportCustomPublication}>
-              <Download size={14} />
-              {isExporting ? '导出中' : '导出自定义表'}
-            </button>
-          </div>
-        </section>
-
-        <div className="publication-workbench__meta">
-          <span>{selectedPublicationSources.length} 个来源列</span>
-          <span>{visiblePublicationVariableCount} 个显示变量</span>
-          <span>{enabledPublicationStatisticCount} 个统计行</span>
-          {isCustomPublicationDefaultTableMode ? <span>与直接论文三线表一致</span> : null}
-          <span>{publicationTemplateStatus}</span>
-        </div>
-
-        {isCustomPublicationDefaultTableMode ? (
-          <div className="custom-publication-mode-notice">
-            <div>
-              <strong>当前使用“当前结果论文三线表”模式</strong>
-              <span>预览和导出会复用直接导出的论文三线表。添加历史来源、修改列头或调整格式后，将进入自定义多列表模式。</span>
-            </div>
-            <button className="secondary-button" type="button" onClick={startCustomPublicationEditing} disabled={isExporting}>
-              开始自定义多列表
-            </button>
-          </div>
-        ) : null}
-
-        {exportError && workspaceTab === 'publication' ? (
-          <div className="export-error" role="alert">
-            <AlertTriangle size={15} />
-            {exportError}
-          </div>
-        ) : null}
-
-        <div className="custom-publication-panel custom-publication-panel--workspace">
-          <div className="custom-publication-toolbar">
-            <div className="custom-publication-toolbar__group">
-              <button className="secondary-button" type="button" onClick={resetCustomPublicationOrdering} disabled={isExporting}>
-                恢复默认顺序
-              </button>
-              <button className="secondary-button" type="button" onClick={restoreCustomPublicationDefaults} disabled={isExporting}>
-                恢复默认规则
-              </button>
-              <button className="secondary-button" type="button" onClick={saveCustomPublicationTemplate} disabled={isExporting}>
-                保存模板
-              </button>
-              <button className="secondary-button" type="button" onClick={applyDefaultCustomPublicationTemplate} disabled={isExporting || !customPublicationDefaultTemplateId}>
-                应用默认模板
-              </button>
-            </div>
-          </div>
-
-          <div className="custom-publication-fields">
-            <label>
-              <span>表名</span>
-              <input value={customPublicationConfig.title} disabled={isExporting} onChange={(event) => updateCustomPublicationConfig({ title: event.target.value })} />
-            </label>
-            <label>
-              <span>注释</span>
-              <textarea value={customPublicationConfig.note} disabled={isExporting} rows={3} onChange={(event) => updateCustomPublicationConfig({ note: event.target.value })} />
-            </label>
-          </div>
-
-          <div className="custom-publication-settings-grid">
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>列与多级表头</strong>
-                <span>选择当前结果和历史结果作为列来源，并设置一级分组、列名与模型行。</span>
-              </div>
-              <div className="custom-publication-source-list custom-publication-source-list--workspace">
-                {publicationSources.length === 0 ? (
-                  <div className="empty-history">暂无可用结果。运行模型或保存带结果的历史记录后可联合导出。</div>
-                ) : (
-                  [...selectedPublicationSources, ...publicationSources.filter((source) => !customPublicationSelectedSet.has(source.id))].map((source, sourceIndex) => {
-                    const draft = customPublicationConfig.columns[source.id] ?? {
-                      id: source.id,
-                      label: `(${sourceIndex + 1})`,
-                      group: '',
-                      modelLabel: source.modelShortName || source.modelName,
-                    }
-                    const selectedIndex = selectedPublicationSources.findIndex((entry) => entry.id === source.id)
-                    return (
-                      <div
-                        className={`custom-publication-source ${customPublicationSelectedSet.has(source.id) ? 'is-selected' : ''}`}
-                        key={source.id}
-                        draggable={customPublicationSelectedSet.has(source.id)}
-                        onDragStart={() => setDraggingPublicationItem({ kind: 'column', id: source.id })}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => reorderCustomPublicationByDrop('column', source.id)}
-                        onDragEnd={() => setDraggingPublicationItem(null)}
-                      >
-                        <label className="custom-publication-source__check">
-                          <input type="checkbox" checked={customPublicationSelectedSet.has(source.id)} disabled={isExporting} onChange={() => toggleCustomPublicationSource(source.id)} />
-                          <span>
-                            <strong>{source.label}</strong>
-                            <small>{source.formula}</small>
-                          </span>
-                        </label>
-                        <div className="custom-publication-source__fields">
-                          <input value={draft.group} placeholder="一级表头分组" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { group: event.target.value })} />
-                          <input value={draft.label} placeholder="列名，如 (1)" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { label: event.target.value })} />
-                          <input value={draft.modelLabel} placeholder="模型行，如 Fe" disabled={isExporting || !customPublicationSelectedSet.has(source.id)} onChange={(event) => updateCustomPublicationColumn(source.id, { modelLabel: event.target.value })} />
-                        </div>
-                        {customPublicationSelectedSet.has(source.id) ? (
-                          <div className="custom-publication-source__actions">
-                            <button className="secondary-button" type="button" disabled={isExporting || selectedIndex <= 0} onClick={() => moveCustomPublicationColumn(source.id, 'up')}>
-                              上移
-                            </button>
-                            <button className="secondary-button" type="button" disabled={isExporting || selectedIndex === -1 || selectedIndex >= selectedPublicationSources.length - 1} onClick={() => moveCustomPublicationColumn(source.id, 'down')}>
-                              下移
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </section>
-
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>显示规则</strong>
-                <span>控制数字位数、括号统计、星号阈值以及缺失/布尔展示方式。</span>
-              </div>
-              <div className="custom-publication-style-card">
-                <span>表格样式</span>
-                <strong>论文三线表 / Stata 风格</strong>
-                <small>预览、Excel、Word 和 HTML 使用同一套黑白三线表规则；不输出编辑器里的绿色提示角或换行标记。</small>
-              </div>
-              <div className="custom-publication-format-grid">
-                <label><span>系数小数位</span><input type="number" min="0" max="8" value={customPublicationConfig.formatRules.coefficientDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ coefficientDigits: Number(event.target.value) })} /></label>
-                <label><span>括号统计小数位</span><input type="number" min="0" max="8" value={customPublicationConfig.formatRules.statisticDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ statisticDigits: Number(event.target.value) })} /></label>
-                <label><span>N 小数位</span><input type="number" min="0" max="4" value={customPublicationConfig.formatRules.nDigits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ nDigits: Number(event.target.value) })} /></label>
-                <label><span>Adj-R² 小数位</span><input type="number" min="0" max="6" value={customPublicationConfig.formatRules.r2Digits} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ r2Digits: Number(event.target.value) })} /></label>
-                <label>
-                  <span>括号统计</span>
-                  <select value={customPublicationConfig.formatRules.parenthesisMode} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ parenthesisMode: event.target.value as CustomPublicationFormatRules['parenthesisMode'] })}>
-                    <option value="t">t 值</option>
-                    <option value="z">z 值</option>
-                    <option value="stdError">标准误</option>
-                  </select>
-                </label>
-                <label>
-                  <span>缺失显示</span>
-                  <select value={customPublicationConfig.formatRules.missingDisplay} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ missingDisplay: event.target.value as CustomPublicationFormatRules['missingDisplay'] })}>
-                    <option value="">空白</option>
-                    <option value="-">-</option>
-                    <option value="/">/</option>
-                  </select>
-                </label>
-                <label>
-                  <span>布尔显示</span>
-                  <select value={customPublicationConfig.formatRules.booleanDisplay} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ booleanDisplay: event.target.value as CustomPublicationFormatRules['booleanDisplay'] })}>
-                    <option value="yes-no">Yes / No</option>
-                    <option value="yes-blank">Yes / 空白</option>
-                    <option value="check">勾选语义</option>
-                  </select>
-                </label>
-                <label><span>* 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.one} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, one: Number(event.target.value) } })} /></label>
-                <label><span>** 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.two} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, two: Number(event.target.value) } })} /></label>
-                <label><span>*** 阈值</span><input type="number" step="0.001" min="0" max="1" value={customPublicationConfig.formatRules.starLevels.three} disabled={isExporting} onChange={(event) => updateCustomPublicationFormatRules({ starLevels: { ...customPublicationConfig.formatRules.starLevels, three: Number(event.target.value) } })} /></label>
-              </div>
-            </section>
-          </div>
-
-          <div className="custom-publication-editor-grid">
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>变量行</strong>
-                <span>勾选显示项，支持重命名、按钮排序和拖拽排序。</span>
-              </div>
-              <div className="custom-publication-editor__toolbar">
-                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationVariables(true)} disabled={isExporting}>全选</button>
-                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationVariables(false)} disabled={isExporting}>全不选</button>
-              </div>
-              <div className="custom-publication-row-list custom-publication-row-list--workspace">
-                {orderedCustomPublicationVariableOptions.length === 0 ? (
-                  <div className="empty-history">先选择至少一个包含回归结果的来源列。</div>
-                ) : (
-                  orderedCustomPublicationVariableOptions.map((option, index) => {
-                    const isVisible = !hiddenCustomPublicationVariableSet.has(option.id)
-                    return (
-                      <div className={`custom-publication-row ${isVisible ? 'is-selected' : ''}`} key={option.id} draggable onDragStart={() => setDraggingPublicationItem({ kind: 'variable', id: option.id })} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCustomPublicationByDrop('variable', option.id)} onDragEnd={() => setDraggingPublicationItem(null)}>
-                        <label className="custom-publication-row__check">
-                          <input type="checkbox" checked={isVisible} disabled={isExporting} onChange={() => toggleCustomPublicationVariable(option.id)} />
-                          <span><strong>{option.label}</strong><small>{option.id}</small></span>
-                        </label>
-                        <input className="custom-publication-row__rename" value={customPublicationConfig.variableLabels[option.id] ?? option.label} disabled={isExporting} onChange={(event) => updateCustomPublicationVariableLabel(option.id, event.target.value)} />
-                        <div className="custom-publication-row__actions">
-                          <button className="secondary-button" type="button" disabled={isExporting || index === 0} onClick={() => moveCustomPublicationVariable(option.id, 'up')}>上移</button>
-                          <button className="secondary-button" type="button" disabled={isExporting || index === orderedCustomPublicationVariableOptions.length - 1} onClick={() => moveCustomPublicationVariable(option.id, 'down')}>下移</button>
-                        </div>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </section>
-
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>统计行</strong>
-                <span>自由开关、重命名，并支持按钮排序和拖拽排序。</span>
-              </div>
-              <div className="custom-publication-editor__toolbar">
-                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationStatistics(true)} disabled={isExporting}>全开</button>
-                <button className="secondary-button" type="button" onClick={() => setAllCustomPublicationStatistics(false)} disabled={isExporting}>全关</button>
-              </div>
-              <div className="custom-publication-row-list custom-publication-row-list--workspace">
-                {customPublicationStatisticOptions.length === 0 ? (
-                  <div className="empty-history">选择结果列后，这里会出现可配置的统计行。</div>
-                ) : (
-                  customPublicationStatisticOptions.map((option, index) => {
-                    const isEnabled = !disabledCustomPublicationStatisticSet.has(option.id)
-                    return (
-                      <div className={`custom-publication-row ${isEnabled ? 'is-selected' : ''}`} key={option.id} draggable onDragStart={() => setDraggingPublicationItem({ kind: 'statistic', id: option.id })} onDragOver={(event) => event.preventDefault()} onDrop={() => reorderCustomPublicationByDrop('statistic', option.id)} onDragEnd={() => setDraggingPublicationItem(null)}>
-                        <div className="custom-publication-row__check">
-                          <input type="checkbox" checked={isEnabled} disabled={isExporting} onChange={() => toggleCustomPublicationStatistic(option.id)} />
-                          <span><strong>{option.label}</strong><small>{option.detail}</small></span>
-                        </div>
-                        <input className="custom-publication-row__rename" value={customPublicationConfig.statisticLabels[option.id] ?? option.label} disabled={isExporting} onChange={(event) => updateCustomPublicationStatisticLabel(option.id, event.target.value)} />
-                        <div className="custom-publication-row__actions">
-                          <button className="secondary-button" type="button" disabled={isExporting || index === 0} onClick={() => moveCustomPublicationStatistic(option.id, 'up')}>上移</button>
-                          <button className="secondary-button" type="button" disabled={isExporting || index === customPublicationStatisticOptions.length - 1} onClick={() => moveCustomPublicationStatistic(option.id, 'down')}>下移</button>
-                        </div>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </section>
-          </div>
-
-          <div className="custom-publication-preview-grid custom-publication-preview-grid--single">
-            <section className="custom-publication-editor">
-              <div className="custom-publication-editor__header">
-                <strong>用户模板</strong>
-                <span>保存你自己的论文表格式，后续可套用、复制、删除，并设置为默认模板。</span>
-              </div>
-              <div className="custom-publication-template-list">
-                {customPublicationTemplates.length === 0 ? (
-                  <div className="empty-history">还没有保存的模板。</div>
-                ) : (
-                  customPublicationTemplates.map((template) => (
-                    <div className={`custom-publication-template ${customPublicationDefaultTemplateId === template.id ? 'is-default' : ''}`} key={template.id}>
-                      <input value={template.name} disabled={isExporting} onChange={(event) => renameCustomPublicationTemplate(template.id, event.target.value)} />
-                      <small>更新于 {new Date(template.updatedAt).toLocaleString()}</small>
-                      <div className="custom-publication-template__actions">
-                        <button className="secondary-button" type="button" onClick={() => applyCustomPublicationTemplate(template.id)} disabled={isExporting}>应用</button>
-                        <button className="secondary-button" type="button" onClick={() => duplicateCustomPublicationTemplate(template.id)} disabled={isExporting}>复制</button>
-                        <button className="secondary-button" type="button" onClick={() => setCustomPublicationDefaultTemplateId(template.id)} disabled={isExporting}>{customPublicationDefaultTemplateId === template.id ? '默认中' : '设默认'}</button>
-                        <button className="secondary-button is-danger" type="button" onClick={() => deleteCustomPublicationTemplate(template.id)} disabled={isExporting}>删除</button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
-
-      <div className="publication-workbench__preview">
-        <section className="publication-preview-card">
-          <div className="publication-preview-card__header">
-            <div>
-              <span className="panel__label">Live preview</span>
-              <h2>论文表预览</h2>
-              <p>预览会实时反映列顺序、变量显示、统计行与注释内容。</p>
-            </div>
-            <button className="secondary-button is-subtle" type="button" onClick={() => exportCustomPublicationOnly('excel')} disabled={!canExportCustomPublication}>
-              导出 Excel
-            </button>
-          </div>
-          {customPublicationPreviewTable ? (
-            <div className="publication-preview-card__body">
-              <div className="custom-publication-preview__frame custom-publication-preview__frame--workspace" dangerouslySetInnerHTML={{ __html: customPublicationPreviewHtml }} />
-            </div>
-          ) : (
-            <div className="empty-history">先选择至少一个结果列，右侧会实时生成论文表预览。</div>
-          )}
-        </section>
-      </div>
-    </section>
+    <CustomPublicationWorkbench
+      config={customPublicationConfig}
+      sources={publicationSources}
+      selectedSources={selectedPublicationSources}
+      selectedSourceIds={customPublicationSelectedSet}
+      variableOptions={orderedCustomPublicationVariableOptions}
+      statisticOptions={customPublicationStatisticOptions}
+      hiddenVariableIds={hiddenCustomPublicationVariableSet}
+      disabledStatisticIds={disabledCustomPublicationStatisticSet}
+      templates={customPublicationTemplates}
+      defaultTemplateId={customPublicationDefaultTemplateId}
+      previewTable={customPublicationPreviewTable}
+      previewHtml={customPublicationPreviewHtml}
+      displayTitle={customPublicationDisplayTitle}
+      templateStatus={publicationTemplateStatus}
+      isDefaultTableMode={isCustomPublicationDefaultTableMode}
+      isExporting={isExporting}
+      canExport={canExportCustomPublication}
+      exportError={workspaceTab === 'publication' ? exportError : ''}
+      onClose={closePublicationWorkbench}
+      onExport={exportCustomPublicationOnly}
+      onStartCustom={startCustomPublicationEditing}
+      onRestoreDefaults={restoreCustomPublicationDefaults}
+      onResetOrdering={resetCustomPublicationOrdering}
+      onSaveTemplate={saveCustomPublicationTemplate}
+      onApplyDefaultTemplate={applyDefaultCustomPublicationTemplate}
+      onUpdateText={updateCustomPublicationConfig}
+      onUpdateFormatRules={updateCustomPublicationFormatRules}
+      onToggleSource={toggleCustomPublicationSource}
+      onUpdateColumn={updateCustomPublicationColumn}
+      onMoveColumn={moveCustomPublicationColumn}
+      onToggleVariable={toggleCustomPublicationVariable}
+      onMoveVariable={moveCustomPublicationVariable}
+      onUpdateVariableLabel={updateCustomPublicationVariableLabel}
+      onSetAllVariables={setAllCustomPublicationVariables}
+      onToggleStatistic={toggleCustomPublicationStatistic}
+      onMoveStatistic={moveCustomPublicationStatistic}
+      onUpdateStatisticLabel={updateCustomPublicationStatisticLabel}
+      onSetAllStatistics={setAllCustomPublicationStatistics}
+      onSetDraggingItem={publicationActions.setDraggingItem}
+      onDropItem={reorderCustomPublicationByDrop}
+      onApplyTemplate={applyCustomPublicationTemplate}
+      onDuplicateTemplate={duplicateCustomPublicationTemplate}
+      onRenameTemplate={renameCustomPublicationTemplate}
+      onSetDefaultTemplate={publicationActions.setDefaultTemplate}
+      onDeleteTemplate={deleteCustomPublicationTemplate}
+    />
   )
 
   const renderCustomPublicationExportSummary = () => (
-    <div className="custom-publication-summary-card">
-      <div className="custom-publication-summary-card__header">
-        <div>
-          <strong>自定义论文表</strong>
-          <span>复杂编辑已迁移到独立工作台，这里只保留导出摘要。</span>
-        </div>
-        <button className="secondary-button" type="button" onClick={openPublicationWorkbench} disabled={!result}>
-          进入编辑器
-        </button>
-      </div>
-      <div className="custom-publication-summary-card__grid">
-        <div><span>当前表名</span><strong>{customPublicationDisplayTitle}</strong></div>
-        <div><span>来源列</span><strong>{selectedPublicationSources.length} 个</strong></div>
-        <div><span>变量行</span><strong>{visiblePublicationVariableCount} 个显示</strong></div>
-        <div><span>统计行</span><strong>{enabledPublicationStatisticCount} 个启用</strong></div>
-      </div>
-      <p className="custom-publication-summary-card__footnote">
-        {publicationTemplateStatus}
-        {customPublicationDefaultTemplateId ? ' · 已设置默认模板' : ''}
-      </p>
-    </div>
+    <CustomPublicationExportSummary
+      displayTitle={customPublicationDisplayTitle}
+      selectedSourceCount={selectedPublicationSources.length}
+      visibleVariableCount={visiblePublicationVariableCount}
+      enabledStatisticCount={enabledPublicationStatisticCount}
+      templateStatus={publicationTemplateStatus}
+      hasDefaultTemplate={Boolean(customPublicationDefaultTemplateId)}
+      hasResult={Boolean(result)}
+      onOpen={openPublicationWorkbench}
+    />
   )
 
   return (
@@ -4667,7 +2017,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                 <h2>模型运行失败</h2>
                 <p>{runFailureDialog.modelName} · {runFailureDialog.formula}</p>
               </div>
-              <button className="ghost-button" type="button" onClick={() => setRunFailureDialog(null)} title="关闭">
+              <button className="ghost-button" type="button" onClick={closeRunFailureDialog} title="关闭">
                 <X size={16} />
               </button>
             </div>
@@ -4690,7 +2040,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                 className="secondary-button"
                 type="button"
                 onClick={() => {
-                  setRunFailureDialog(null)
+                  closeRunFailureDialog()
                   openVariableSetup()
                 }}
               >
@@ -4700,7 +2050,7 @@ body{font-family:"Times New Roman","Noto Serif SC",serif;color:#1a1f26;margin:28
                 className="primary-button"
                 type="button"
                 onClick={() => {
-                  setRunFailureDialog(null)
+                  closeRunFailureDialog()
                   handleRunModel()
                 }}
                 disabled={validationErrors.length > 0 || !hasActiveModel || !hasDataset || isModelRunning}

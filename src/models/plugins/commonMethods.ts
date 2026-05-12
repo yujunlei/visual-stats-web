@@ -9,6 +9,15 @@ const allTypes = ['numeric', 'category', 'date', 'text'] as const
 const exportAllTables = (result: ModelResult, formula: string) =>
   [...csvSummarySection(formula, result.summary), ...result.tables.flatMap((table) => ['', ...csvTableSection(table)])].join('\n')
 
+const pushGroupedValue = (groups: Map<string, number[]>, key: string, value: number) => {
+  const values = groups.get(key)
+  if (values) {
+    values.push(value)
+  } else {
+    groups.set(key, [value])
+  }
+}
+
 export const frequencyAnalysisPlugin: ModelPlugin = {
   id: 'frequency-analysis',
   name: '频数',
@@ -157,7 +166,7 @@ export const categorySummaryPlugin: ModelPlugin = {
       const value = Number(row[variable])
       if (!Number.isFinite(value)) return
       const key = compactValue(row[group])
-      groups.set(key, [...(groups.get(key) ?? []), value])
+      pushGroupedValue(groups, key, value)
     })
     const tableRows = Array.from(groups.entries())
       .map(([groupValue, values]) => ({
@@ -242,11 +251,22 @@ export const crosstabChiSquarePlugin: ModelPlugin = {
     const colVar = paramString(config, 'colVar')
     if (!rowVar || !colVar) throw new Error('交叉表需要选择行变量和列变量。')
 
-    const rowCategories = Array.from(new Set(rows.map((row) => compactValue(row[rowVar])))).sort()
-    const colCategories = Array.from(new Set(rows.map((row) => compactValue(row[colVar])))).sort()
-    const counts = rowCategories.map((rowCategory) =>
-      colCategories.map((colCategory) => rows.filter((row) => compactValue(row[rowVar]) === rowCategory && compactValue(row[colVar]) === colCategory).length),
-    )
+    const rowCategorySet = new Set<string>()
+    const colCategorySet = new Set<string>()
+    const countMap = new Map<string, number>()
+
+    rows.forEach((row) => {
+      const rowCategory = compactValue(row[rowVar])
+      const colCategory = compactValue(row[colVar])
+      rowCategorySet.add(rowCategory)
+      colCategorySet.add(colCategory)
+      const key = `${rowCategory}\u0000${colCategory}`
+      countMap.set(key, (countMap.get(key) ?? 0) + 1)
+    })
+
+    const rowCategories = Array.from(rowCategorySet).sort()
+    const colCategories = Array.from(colCategorySet).sort()
+    const counts = rowCategories.map((rowCategory) => colCategories.map((colCategory) => countMap.get(`${rowCategory}\u0000${colCategory}`) ?? 0))
     const rowTotals = counts.map((row) => row.reduce((sum, value) => sum + value, 0))
     const colTotals = colCategories.map((_, colIndex) => counts.reduce((sum, row) => sum + row[colIndex], 0))
     const total = rowTotals.reduce((sum, value) => sum + value, 0)
@@ -342,7 +362,7 @@ export const varianceAnalysisPlugin: ModelPlugin = {
       const value = Number(row[variable])
       if (!Number.isFinite(value)) return
       const key = group ? compactValue(row[group]) : 'All'
-      groups.set(key, [...(groups.get(key) ?? []), value])
+      pushGroupedValue(groups, key, value)
     })
     const tableRows = Array.from(groups.entries()).map(([groupValue, values]) => ({
       group: groupValue,
@@ -429,7 +449,7 @@ export const independentTTestPlugin: ModelPlugin = {
       const value = Number(row[variable])
       if (!Number.isFinite(value)) return
       const key = compactValue(row[group])
-      groups.set(key, [...(groups.get(key) ?? []), value])
+      pushGroupedValue(groups, key, value)
     })
     const selected = Array.from(groups.entries())
       .filter((entry) => entry[1].length > 1)

@@ -67,16 +67,16 @@ export function ResultReadingPanel(props: ResultReadingPanelProps) {
         </div>
       ) : result ? (
         <>
+          <ResultLeadConclusion
+            leadInsight={leadInsight}
+            secondaryInsights={secondaryInsights}
+          />
+
           <ResultEstimateOverview
             modelName={modelName}
             formula={formula}
             visibleSummaryMetrics={visibleSummaryMetrics}
             mainResultTable={mainResultTable}
-          />
-
-          <ResultLeadConclusion
-            leadInsight={leadInsight}
-            secondaryInsights={secondaryInsights}
           />
 
           <ResultTables secondaryResultTables={secondaryResultTables} />

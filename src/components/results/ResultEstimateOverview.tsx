@@ -12,7 +12,7 @@ export function ResultEstimateOverview({ modelName, formula, visibleSummaryMetri
   return (
     <section className="result-estimate-overview">
       <div className="paper-section-heading paper-section-heading--flat">
-        <span className="paper-section-heading__index">一</span>
+        <span className="paper-section-heading__index">二</span>
         <div>
           <strong>模型摘要与系数估计</strong>
           <small>Model summary and estimates</small>

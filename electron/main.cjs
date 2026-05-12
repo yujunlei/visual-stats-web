@@ -18,6 +18,19 @@ function writeLog(message) {
   }
 }
 
+function openExternalUrl(url) {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      writeLog(`blocked-external-url protocol=${parsed.protocol} url=${url}`)
+      return
+    }
+    shell.openExternal(parsed.toString()).catch((error) => writeLog(`open-external-error ${error.message}`))
+  } catch (error) {
+    writeLog(`blocked-external-url invalid url=${url} error=${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 function createWindow() {
   writeLog(`create-window dev=${isDev}`)
   const mainWindow = new BrowserWindow({
@@ -62,7 +75,7 @@ function createWindow() {
   mainWindow.on('closed', () => writeLog('window-closed'))
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    openExternalUrl(url)
     return { action: 'deny' }
   })
 
