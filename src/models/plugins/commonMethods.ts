@@ -1,4 +1,4 @@
-import { chiSquarePValue, compactValue, excessKurtosis, mean, median, normalPValue, numericValues, pairedNumericValues, quantile, rankValues, skewness, stdDev, twoSidedT, variance } from '../shared/commonStats'
+import { chiSquarePValue, compactValue, excessKurtosis, mean, median, normalPValue, numericValues, pairedNumericValues, rankValues, skewness, stdDev, twoSidedT, variance } from '../shared/commonStats'
 import { compactConfig, paramNumber, paramString } from '../shared/config'
 import { csvSummarySection, csvTableSection } from '../shared/csv'
 import type { ModelPlugin, ModelResult } from '../types'
@@ -16,6 +16,42 @@ const pushGroupedValue = (groups: Map<string, number[]>, key: string, value: num
   } else {
     groups.set(key, [value])
   }
+}
+
+const summarizeValues = (values: number[]) => {
+  let sum = 0
+  let min = Infinity
+  let max = -Infinity
+  values.forEach((value) => {
+    sum += value
+    if (value < min) min = value
+    if (value > max) max = value
+  })
+
+  const average = sum / values.length
+  let squaredDiffSum = 0
+  values.forEach((value) => {
+    squaredDiffSum += (value - average) ** 2
+  })
+  const sampleVariance = values.length <= 1 ? 0 : squaredDiffSum / (values.length - 1)
+
+  return {
+    n: values.length,
+    mean: average,
+    variance: sampleVariance,
+    stdDev: Math.sqrt(sampleVariance),
+    min,
+    max,
+  }
+}
+
+const quantileSorted = (sortedValues: number[], probability: number) => {
+  if (sortedValues.length === 0) return 0
+  const position = (sortedValues.length - 1) * probability
+  const lower = Math.floor(position)
+  const upper = Math.ceil(position)
+  if (lower === upper) return sortedValues[lower]
+  return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (position - lower)
 }
 
 export const frequencyAnalysisPlugin: ModelPlugin = {
@@ -169,15 +205,18 @@ export const categorySummaryPlugin: ModelPlugin = {
       pushGroupedValue(groups, key, value)
     })
     const tableRows = Array.from(groups.entries())
-      .map(([groupValue, values]) => ({
-        group: groupValue,
-        n: values.length,
-        mean: mean(values),
-        median: median(values),
-        stdDev: stdDev(values),
-        min: Math.min(...values),
-        max: Math.max(...values),
-      }))
+      .map(([groupValue, values]) => {
+        const stats = summarizeValues(values)
+        return {
+          group: groupValue,
+          n: stats.n,
+          mean: stats.mean,
+          median: median(values),
+          stdDev: stats.stdDev,
+          min: stats.min,
+          max: stats.max,
+        }
+      })
       .sort((left, right) => right.n - left.n)
 
     return {
@@ -253,23 +292,41 @@ export const crosstabChiSquarePlugin: ModelPlugin = {
 
     const rowCategorySet = new Set<string>()
     const colCategorySet = new Set<string>()
-    const countMap = new Map<string, number>()
+    const countMap = new Map<string, Map<string, number>>()
 
     rows.forEach((row) => {
       const rowCategory = compactValue(row[rowVar])
       const colCategory = compactValue(row[colVar])
       rowCategorySet.add(rowCategory)
       colCategorySet.add(colCategory)
-      const key = `${rowCategory}\u0000${colCategory}`
-      countMap.set(key, (countMap.get(key) ?? 0) + 1)
+      const rowCounts = countMap.get(rowCategory)
+      if (rowCounts) {
+        rowCounts.set(colCategory, (rowCounts.get(colCategory) ?? 0) + 1)
+      } else {
+        countMap.set(rowCategory, new Map([[colCategory, 1]]))
+      }
     })
 
     const rowCategories = Array.from(rowCategorySet).sort()
     const colCategories = Array.from(colCategorySet).sort()
-    const counts = rowCategories.map((rowCategory) => colCategories.map((colCategory) => countMap.get(`${rowCategory}\u0000${colCategory}`) ?? 0))
-    const rowTotals = counts.map((row) => row.reduce((sum, value) => sum + value, 0))
-    const colTotals = colCategories.map((_, colIndex) => counts.reduce((sum, row) => sum + row[colIndex], 0))
-    const total = rowTotals.reduce((sum, value) => sum + value, 0)
+    const counts: number[][] = []
+    const rowTotals: number[] = []
+    const colTotals = Array.from({ length: colCategories.length }, () => 0)
+    let total = 0
+    rowCategories.forEach((rowCategory) => {
+      const rowCounts = countMap.get(rowCategory)
+      const countRow: number[] = []
+      let rowTotal = 0
+      colCategories.forEach((colCategory, colIndex) => {
+        const observed = rowCounts?.get(colCategory) ?? 0
+        countRow.push(observed)
+        rowTotal += observed
+        colTotals[colIndex] += observed
+      })
+      counts.push(countRow)
+      rowTotals.push(rowTotal)
+      total += rowTotal
+    })
     let chiSquare = 0
     counts.forEach((row, rowIndex) => {
       row.forEach((observed, colIndex) => {
@@ -279,11 +336,14 @@ export const crosstabChiSquarePlugin: ModelPlugin = {
     })
     const df = Math.max((rowCategories.length - 1) * (colCategories.length - 1), 1)
     const pValue = chiSquarePValue(chiSquare, df)
-    const tableRows = rowCategories.map((rowCategory, rowIndex) => ({
-      rowCategory,
-      ...Object.fromEntries(colCategories.map((colCategory, colIndex) => [colCategory, counts[rowIndex][colIndex]])),
-      rowTotal: rowTotals[rowIndex],
-    }))
+    const tableRows = rowCategories.map((rowCategory, rowIndex) => {
+      const row: Record<string, string | number> = { rowCategory }
+      colCategories.forEach((colCategory, colIndex) => {
+        Object.defineProperty(row, colCategory, { value: counts[rowIndex][colIndex], enumerable: true, configurable: true, writable: true })
+      })
+      row.rowTotal = rowTotals[rowIndex]
+      return row
+    })
 
     return {
       id: this.id,
@@ -364,14 +424,18 @@ export const varianceAnalysisPlugin: ModelPlugin = {
       const key = group ? compactValue(row[group]) : 'All'
       pushGroupedValue(groups, key, value)
     })
-    const tableRows = Array.from(groups.entries()).map(([groupValue, values]) => ({
-      group: groupValue,
-      n: values.length,
-      variance: variance(values),
-      stdDev: stdDev(values),
-      range: Math.max(...values) - Math.min(...values),
-      iqr: quantile(values, 0.75) - quantile(values, 0.25),
-    }))
+    const tableRows = Array.from(groups.entries()).map(([groupValue, values]) => {
+      const stats = summarizeValues(values)
+      const sortedValues = [...values].sort((left, right) => left - right)
+      return {
+        group: groupValue,
+        n: stats.n,
+        variance: stats.variance,
+        stdDev: stats.stdDev,
+        range: stats.max - stats.min,
+        iqr: quantileSorted(sortedValues, 0.75) - quantileSorted(sortedValues, 0.25),
+      }
+    })
 
     return {
       id: this.id,
@@ -768,21 +832,38 @@ export const nonparametricTestPlugin: ModelPlugin = {
     const group = paramString(config, 'group')
     const variable = paramString(config, 'variable')
     if (!group || !variable) throw new Error('非参数检验需要选择分组变量和数值变量。')
-    const observations = rows
-      .map((row) => ({ group: compactValue(row[group]), value: Number(row[variable]) }))
-      .filter((entry) => Number.isFinite(entry.value))
-    const groups = Array.from(new Set(observations.map((entry) => entry.group)))
+    const observations: Array<{ group: string; value: number }> = []
+    const groups: string[] = []
+    const groupIndexes = new Map<string, number>()
+    rows.forEach((row) => {
+      const value = Number(row[variable])
+      if (!Number.isFinite(value)) return
+      const groupValue = compactValue(row[group])
+      if (!groupIndexes.has(groupValue)) {
+        groupIndexes.set(groupValue, groups.length)
+        groups.push(groupValue)
+      }
+      observations.push({ group: groupValue, value })
+    })
     if (groups.length < 2) throw new Error('非参数检验至少需要两个有效分组。')
-    const ranks = rankValues(observations.map((entry) => entry.value))
-    const groupRows = groups.map((groupValue) => {
-      const groupRanks = ranks.filter((_, index) => observations[index].group === groupValue)
-      const values = observations.filter((entry) => entry.group === groupValue).map((entry) => entry.value)
+    const observationValues = observations.map((entry) => entry.value)
+    const ranks = rankValues(observationValues)
+    const groupedRankValues = groups.map((groupValue) => ({ group: groupValue, values: [] as number[], rankSum: 0 }))
+    observations.forEach((entry, index) => {
+      const groupIndex = groupIndexes.get(entry.group)
+      if (groupIndex === undefined) return
+      const grouped = groupedRankValues[groupIndex]
+      grouped.values.push(entry.value)
+      grouped.rankSum += ranks[index]
+    })
+    const groupRows = groupedRankValues.map((grouped) => {
+      const n = grouped.values.length
       return {
-        group: groupValue,
-        n: values.length,
-        median: median(values),
-        rankSum: groupRanks.reduce((sum, value) => sum + value, 0),
-        meanRank: mean(groupRanks),
+        group: grouped.group,
+        n,
+        median: median(grouped.values),
+        rankSum: grouped.rankSum,
+        meanRank: grouped.rankSum / n,
       }
     })
     const totalN = observations.length
