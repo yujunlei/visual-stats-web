@@ -151,7 +151,7 @@ const profileGrid = (center: number | null, width: number, steps: number) => {
 
 const logLikelihood = (logDet: number, sse: number, n: number) => {
   if (!Number.isFinite(logDet) || sse <= 0) return Number.NEGATIVE_INFINITY
-  return logDet - (n / 2) * Math.log(sse / n)
+  return logDet - (n / 2) * (Math.log(2 * Math.PI) + 1 + Math.log(sse / n))
 }
 
 const curvatureStdError = (center: number, logLik: number, evaluator: (value: number) => number) => {

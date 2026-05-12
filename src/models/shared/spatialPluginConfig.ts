@@ -16,7 +16,24 @@ export type SpatialSpec = {
   message: string
 }
 
-const spatialColumns = ['model', 'spatialKey', 'neighborKey', 'weightField', 'specification', 'spatialTerms', 'validWeights', 'rSquared', 'rootMse']
+const spatialColumns = [
+  'model',
+  'spatialKey',
+  'neighborKey',
+  'weightField',
+  'specification',
+  'spatialTerms',
+  'validWeights',
+  'nodes',
+  'weightNodes',
+  'matchedNodes',
+  'validEdges',
+  'isolatedNodes',
+  'matchRate',
+  'rowStandardized',
+  'rSquared',
+  'rootMse',
+]
 
 export const droppedColumns = ['variable', 'reason']
 export const effectColumns = ['effect', 'groups', 'singletonGroups', 'minObs', 'maxObs', 'avgObs', 'absorbedDf']
@@ -161,6 +178,13 @@ export const spatialSetupTable = (
       specification: getSpatialFormula(spec.kind, config),
       spatialTerms: spatialTerms.join(', ') || 'NA',
       validWeights: context.validWeights,
+      nodes: context.diagnostics.nodes,
+      weightNodes: context.diagnostics.weightNodes,
+      matchedNodes: context.diagnostics.matchedNodes,
+      validEdges: context.diagnostics.validEdges,
+      isolatedNodes: context.diagnostics.isolatedNodes,
+      matchRate: context.diagnostics.sampleMatchRate,
+      rowStandardized: context.diagnostics.rowStandardized ? 'Yes' : 'No',
       rSquared: fit?.r2 ?? 'NA',
       rootMse: fit?.rootMse ?? 'NA',
     },

@@ -6,11 +6,22 @@ import type { ModelConfig, ModelParamValue, SpatialWeightsParam } from '../types
 
 export type SpatialModelKind = 'sar' | 'slx' | 'sdm' | 'sem' | 'sdem' | 'sac' | 'gns' | 'panel-sdm' | 'spatial-logit'
 
+export type SpatialWeightDiagnostics = {
+  nodes: number
+  weightNodes: number
+  matchedNodes: number
+  validEdges: number
+  isolatedNodes: number
+  sampleMatchRate: number
+  rowStandardized: boolean
+}
+
 export type SpatialContext = {
   mode: 'sorted' | 'edge-list' | 'file'
   validWeights: number
   neighborRule: string
   weightMatrix: string
+  diagnostics: SpatialWeightDiagnostics
   lagColumn(column: string, sourceRows?: Row[]): Map<number, number>
   weightMatrixForRows(sourceRows: Row[]): number[][]
 }
@@ -41,11 +52,14 @@ const rowStandardize = (weightsByFrom: Map<string, Array<{ to: string; weight: n
   const standardized = new Map<string, Array<{ to: string; weight: number }>>()
 
   weightsByFrom.forEach((edges, from) => {
-    const denominator = edges.reduce((sum, edge) => sum + Math.abs(edge.weight), 0)
+    const mergedEdges = Array.from(
+      edges.reduce((merged, edge) => merged.set(edge.to, (merged.get(edge.to) ?? 0) + edge.weight), new Map<string, number>()).entries(),
+    ).map(([to, weight]) => ({ to, weight }))
+    const denominator = mergedEdges.reduce((sum, edge) => sum + Math.abs(edge.weight), 0)
     if (denominator === 0) return
     standardized.set(
       from,
-      edges.map((edge) => ({
+      mergedEdges.map((edge) => ({
         ...edge,
         weight: edge.weight / denominator,
       })),
@@ -65,6 +79,28 @@ const buildWeightedContext = (
 ): SpatialContext => {
   const standardizedWeights = rowStandardize(weightsByFrom)
   const validWeights = Array.from(standardizedWeights.values()).reduce((sum, edges) => sum + edges.length, 0)
+  const sampleKeys = uniqueSpatialValues(rows.map((row) => compact(row[spatialKey])))
+  const weightKeys = new Set<string>()
+  standardizedWeights.forEach((edges, from) => {
+    weightKeys.add(from)
+    edges.forEach((edge) => weightKeys.add(edge.to))
+  })
+  const matchedNodes = sampleKeys.filter((key) => weightKeys.has(key)).length
+  const isolatedNodes = sampleKeys.filter((key) => (standardizedWeights.get(key)?.length ?? 0) === 0).length
+  const diagnostics: SpatialWeightDiagnostics = {
+    nodes: sampleKeys.length,
+    weightNodes: weightKeys.size,
+    matchedNodes,
+    validEdges: validWeights,
+    isolatedNodes,
+    sampleMatchRate: sampleKeys.length === 0 ? 0 : matchedNodes / sampleKeys.length,
+    rowStandardized: true,
+  }
+
+  if (validWeights === 0) throw new Error(`${sourceLabel} 没有可用的非零空间权重。`)
+  if (sampleKeys.length > 0 && matchedNodes === 0) {
+    throw new Error(`${sourceLabel} 与空间键 ${spatialKey} 没有匹配节点，请检查 W 文件或空间键字段。`)
+  }
 
   const lagColumn = (column: string, sourceRows = rows) => {
     const valueGroups = new Map<string, { sum: number; count: number }>()
@@ -85,11 +121,15 @@ const buildWeightedContext = (
     rows.forEach((row, index) => {
       const edges = standardizedWeights.get(compact(row[spatialKey]))
       if (!edges || edges.length === 0) return
-      const weightedValue = edges.reduce((sum, edge) => {
+      let usedWeight = 0
+      const weightedSum = edges.reduce((sum, edge) => {
         const neighborValue = valueByKey.get(edge.to)
-        return neighborValue === undefined ? sum : sum + edge.weight * neighborValue
+        if (neighborValue === undefined) return sum
+        usedWeight += Math.abs(edge.weight)
+        return sum + edge.weight * neighborValue
       }, 0)
-      lagByIndex.set(index, weightedValue)
+      if (usedWeight === 0) return
+      lagByIndex.set(index, weightedSum / usedWeight)
     })
 
     return lagByIndex
@@ -106,11 +146,14 @@ const buildWeightedContext = (
     const matrix = Array.from({ length: sourceRows.length }, () => Array.from({ length: sourceRows.length }, () => 0))
     sourceRows.forEach((row, rowIndex) => {
       const edges = standardizedWeights.get(compact(row[spatialKey])) ?? []
-      edges.forEach((edge) => {
-        const targetIndexes = indexesByKey.get(edge.to) ?? []
-        if (targetIndexes.length === 0) return
+      const presentEdges = edges
+        .map((edge) => ({ edge, targetIndexes: indexesByKey.get(edge.to) ?? [] }))
+        .filter((entry) => entry.targetIndexes.length > 0)
+      const denominator = presentEdges.reduce((sum, entry) => sum + Math.abs(entry.edge.weight), 0)
+      if (denominator === 0) return
+      presentEdges.forEach(({ edge, targetIndexes }) => {
         targetIndexes.forEach((targetIndex) => {
-          matrix[rowIndex][targetIndex] += edge.weight / targetIndexes.length
+          matrix[rowIndex][targetIndex] += edge.weight / denominator / targetIndexes.length
         })
       })
     })
@@ -123,6 +166,7 @@ const buildWeightedContext = (
     validWeights,
     neighborRule: sourceLabel,
     weightMatrix,
+    diagnostics,
     lagColumn,
     weightMatrixForRows,
   }
@@ -214,6 +258,15 @@ const buildSpatialContext = (rows: Row[], target: string, spatialKey: string, ne
     validWeights: sortedIndexes.length,
     neighborRule: '按空间键排序的前后邻近均值',
     weightMatrix: 'sorted-neighbor',
+    diagnostics: {
+      nodes: sortedIndexes.length,
+      weightNodes: sortedIndexes.length,
+      matchedNodes: sortedIndexes.length,
+      validEdges: sortedIndexes.length,
+      isolatedNodes: 0,
+      sampleMatchRate: 1,
+      rowStandardized: true,
+    },
     lagColumn,
     weightMatrixForRows,
   }

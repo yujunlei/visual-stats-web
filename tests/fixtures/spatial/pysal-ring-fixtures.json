@@ -1,0 +1,248 @@
+{
+  "rows": [
+    { "region": "R1", "y": 4.1, "x1": 1, "x2": 2.4 },
+    { "region": "R2", "y": 4.8, "x1": 2, "x2": 1.1 },
+    { "region": "R3", "y": 5.4, "x1": 1.4, "x2": 3.7 },
+    { "region": "R4", "y": 6.9, "x1": 3.2, "x2": 2 },
+    { "region": "R5", "y": 7.2, "x1": 2.7, "x2": 4.4 },
+    { "region": "R6", "y": 8.6, "x1": 4.1, "x2": 3.2 },
+    { "region": "R7", "y": 8.9, "x1": 3.6, "x2": 5.5 },
+    { "region": "R8", "y": 10.3, "x1": 5.2, "x2": 4.1 },
+    { "region": "R9", "y": 10.8, "x1": 4.8, "x2": 6.3 },
+    { "region": "R10", "y": 12, "x1": 6, "x2": 5 },
+    { "region": "R11", "y": 12.4, "x1": 5.7, "x2": 6.9 },
+    { "region": "R12", "y": 13.8, "x1": 7.1, "x2": 5.8 }
+  ],
+  "weights": {
+    "kind": "spatial-weights",
+    "fileName": "ring-12-edge-list.csv",
+    "format": "edge-list",
+    "summary": "12 nodes, 24 directed ring edges, row-standardized in runtime",
+    "edges": [
+      { "from": "R1", "to": "R12", "weight": 1 },
+      { "from": "R1", "to": "R2", "weight": 1 },
+      { "from": "R2", "to": "R1", "weight": 1 },
+      { "from": "R2", "to": "R3", "weight": 1 },
+      { "from": "R3", "to": "R2", "weight": 1 },
+      { "from": "R3", "to": "R4", "weight": 1 },
+      { "from": "R4", "to": "R3", "weight": 1 },
+      { "from": "R4", "to": "R5", "weight": 1 },
+      { "from": "R5", "to": "R4", "weight": 1 },
+      { "from": "R5", "to": "R6", "weight": 1 },
+      { "from": "R6", "to": "R5", "weight": 1 },
+      { "from": "R6", "to": "R7", "weight": 1 },
+      { "from": "R7", "to": "R6", "weight": 1 },
+      { "from": "R7", "to": "R8", "weight": 1 },
+      { "from": "R8", "to": "R7", "weight": 1 },
+      { "from": "R8", "to": "R9", "weight": 1 },
+      { "from": "R9", "to": "R8", "weight": 1 },
+      { "from": "R9", "to": "R10", "weight": 1 },
+      { "from": "R10", "to": "R9", "weight": 1 },
+      { "from": "R10", "to": "R11", "weight": 1 },
+      { "from": "R11", "to": "R10", "weight": 1 },
+      { "from": "R11", "to": "R12", "weight": 1 },
+      { "from": "R12", "to": "R11", "weight": 1 },
+      { "from": "R12", "to": "R1", "weight": 1 }
+    ]
+  },
+  "matrixWeights": {
+    "kind": "spatial-weights",
+    "fileName": "ring-12-matrix.csv",
+    "format": "matrix",
+    "summary": "12 nodes, binary ring matrix, row-standardized in runtime",
+    "nodes": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"],
+    "matrix": [
+      [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+      [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0],
+      [0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0],
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+    ]
+  },
+  "missingRows": [
+    { "region": "R1", "y": 4.1, "x1": 1, "x2": 2.4 },
+    { "region": "R2", "y": 4.8, "x1": 2, "x2": 1.1 },
+    { "region": "R3", "y": 5.4, "x1": 1.4, "x2": 3.7 },
+    { "region": "R4", "y": null, "x1": null, "x2": null },
+    { "region": "R5", "y": 7.2, "x1": 2.7, "x2": 4.4 },
+    { "region": "R6", "y": 8.6, "x1": 4.1, "x2": 3.2 },
+    { "region": "R7", "y": 8.9, "x1": 3.6, "x2": 5.5 },
+    { "region": "R8", "y": 10.3, "x1": 5.2, "x2": 4.1 },
+    { "region": "R9", "y": 10.8, "x1": 4.8, "x2": 6.3 },
+    { "region": "R10", "y": 12, "x1": 6, "x2": 5 },
+    { "region": "R11", "y": 12.4, "x1": 5.7, "x2": 6.9 },
+    { "region": "R12", "y": 13.8, "x1": 7.1, "x2": 5.8 }
+  ],
+  "config": {
+    "target": "y",
+    "features": ["region", "x1", "x2"],
+    "params": {
+      "target": "y",
+      "spatialKey": "region",
+      "neighborKey": "",
+      "weightField": "",
+      "controls": ["x1", "x2"]
+    }
+  },
+  "fixtures": {
+    "slx": {
+      "id": "spatial-slx-pysal",
+      "modelId": "spatial-slx",
+      "source": "PySAL/spreg 1.9.0 generated offline from synthetic ring W fixture",
+      "expected": {
+        "n": 12,
+        "coefficients": {
+          "_cons": { "coefficient": 1.7859244899325404, "stdError": 0.20380015646414326 },
+          "x1": { "coefficient": 1.3496272833119178, "stdError": 0.11967073593251246 },
+          "x2": { "coefficient": 0.4415181834629607, "stdError": 0.12746477018257385 },
+          "W_x1": { "coefficient": -0.0009990590574489033, "stdError": 0.11696966881274383 },
+          "W_x2": { "coefficient": -0.03173434962002375, "stdError": 0.13362992899085624 }
+        },
+        "rSquared": 0.9992602583105307,
+        "pseudoR2": null,
+        "logLikelihood": 12.917848312284654
+      },
+      "tolerance": { "coefficient": 1e-8, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sar": {
+      "id": "spatial-sar-pysal",
+      "modelId": "spatial-sar",
+      "source": "PySAL/spreg 1.9.0 generated offline from synthetic ring W fixture",
+      "expected": {
+        "n": 12,
+        "coefficients": {
+          "_cons": { "coefficient": 1.7806196790889852, "stdError": 0.09414381536303636, "statistic": 18.91382532376215, "pValue": 8.775402466386956e-80 },
+          "x1": { "coefficient": 1.3280739880114447, "stdError": 0.018273877201149986, "statistic": 72.67609240188328, "pValue": 0 },
+          "x2": { "coefficient": 0.4637177032604887, "stdError": 0.024439031832132647, "statistic": 18.97447110203395, "pValue": 2.7728795308782915e-80 },
+          "rho_Wy": { "coefficient": -0.016090028824447693, "stdError": 0.016177311095457055, "statistic": -0.9946046490362744, "pValue": 0.3199285855144648 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9992538138350212,
+        "logLikelihood": 12.865027191676582
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sem": {
+      "id": "spatial-sem-pysal",
+      "modelId": "spatial-sem",
+      "source": "PySAL/spreg 1.9.0 generated offline from synthetic ring W fixture",
+      "expected": {
+        "n": 12,
+        "coefficients": {
+          "_cons": { "coefficient": 1.7010143686143095, "stdError": 0.07347274922403468, "statistic": 23.151636308416062, "pValue": 1.399612239290001e-118 },
+          "x1": { "coefficient": 1.3269122633400992, "stdError": 0.0166448734656274, "statistic": 79.71897570025075, "pValue": 0 },
+          "x2": { "coefficient": 0.4501653502442817, "stdError": 0.017585007760342965, "statistic": 25.599383086965553, "pValue": 1.549862774427139e-144 },
+          "lambda_Wu": { "coefficient": 0.1747323955784086, "stdError": 0.28095251624872275, "statistic": 0.6219285661201227, "pValue": 0.5339888404545714 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9991934291835852,
+        "logLikelihood": 12.54365536419801
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sdm": {
+      "id": "spatial-sdm-pysal",
+      "modelId": "spatial-sdm",
+      "source": "PySAL/spreg 1.9.0 generated offline from synthetic ring W fixture",
+      "expected": {
+        "n": 12,
+        "coefficients": {
+          "_cons": { "coefficient": 1.540156005194074, "stdError": 0.5136637393413108, "statistic": 2.9983740085859876, "pValue": 0.0027142435604456563 },
+          "x1": { "coefficient": 1.335340407422098, "stdError": 0.09049252138660224, "statistic": 14.75636203921488, "pValue": 2.799813266466136e-49 },
+          "x2": { "coefficient": 0.45667944154138435, "stdError": 0.09642865354973063, "statistic": 4.735930916072197, "pValue": 2.18051861630662e-6 },
+          "W_x1": { "coefficient": -0.1829041768788768, "stdError": 0.3871103202620913, "statistic": -0.47248592275980233, "pValue": 0.6365799874212263 },
+          "W_x2": { "coefficient": -0.07191358781695073, "stdError": 0.16164941484036285, "statistic": -0.4448737899111427, "pValue": 0.6564109648162428 },
+          "rho_Wy": { "coefficient": 0.127299556278708, "stdError": 0.28251479952599234, "statistic": 0.4505942927318964, "pValue": 0.6522819807885998 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9992748804666954,
+        "logLikelihood": 12.988721619280902
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.4, "rSquared": 0.05, "logLikelihood": 1 }
+    }
+  },
+  "missingFixtures": {
+    "slx": {
+      "id": "spatial-slx-pysal-missing-values",
+      "modelId": "spatial-slx",
+      "source": "PySAL/spreg 1.9.0 generated offline from ring W fixture after listwise removal of R4",
+      "expected": {
+        "n": 11,
+        "coefficients": {
+          "_cons": { "coefficient": 1.813586592862407, "stdError": 0.21912642927453158 },
+          "x1": { "coefficient": 1.3690001835368548, "stdError": 0.11968612961819257 },
+          "x2": { "coefficient": 0.43050363927613944, "stdError": 0.12572772022350376 },
+          "W_x1": { "coefficient": 0.011684527721058657, "stdError": 0.11540037207461924 },
+          "W_x2": { "coefficient": -0.057964873140065265, "stdError": 0.13689990486023754 }
+        },
+        "rSquared": 0.9993342199036263,
+        "pseudoR2": null,
+        "logLikelihood": 12.13505223553716
+      },
+      "tolerance": { "coefficient": 1e-8, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sar": {
+      "id": "spatial-sar-pysal-missing-values",
+      "modelId": "spatial-sar",
+      "source": "PySAL/spreg 1.9.0 generated offline from ring W fixture after listwise removal of R4",
+      "expected": {
+        "n": 11,
+        "coefficients": {
+          "_cons": { "coefficient": 1.781119300368983, "stdError": 0.09387343959845315 },
+          "x1": { "coefficient": 1.327446593693865, "stdError": 0.018542571985979354 },
+          "x2": { "coefficient": 0.4733172858571581, "stdError": 0.0245540434700554 },
+          "rho_Wy": { "coefficient": -0.021049041789237458, "stdError": 0.014797943377205337 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9993191092881624,
+        "logLikelihood": 12.010289720190308
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sem": {
+      "id": "spatial-sem-pysal-missing-values",
+      "modelId": "spatial-sem",
+      "source": "PySAL/spreg 1.9.0 generated offline from ring W fixture after listwise removal of R4",
+      "expected": {
+        "n": 11,
+        "coefficients": {
+          "_cons": { "coefficient": 1.6903387023938734, "stdError": 0.07707314973571779 },
+          "x1": { "coefficient": 1.322758292418655, "stdError": 0.019365556526590354 },
+          "x2": { "coefficient": 0.45528636181443716, "stdError": 0.02229643929409645 },
+          "lambda_Wu": { "coefficient": 0.031013170186352013, "stdError": 0.2825942794853418 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9991947358594607,
+        "logLikelihood": 11.093293004974026
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.25, "rSquared": 0.05, "logLikelihood": 1 }
+    },
+    "sdm": {
+      "id": "spatial-sdm-pysal-missing-values",
+      "modelId": "spatial-sdm",
+      "source": "PySAL/spreg 1.9.0 generated offline from ring W fixture after listwise removal of R4",
+      "expected": {
+        "n": 11,
+        "coefficients": {
+          "_cons": { "coefficient": 1.8707394154071586, "stdError": 0.5147366905084269 },
+          "x1": { "coefficient": 1.3726011520249375, "stdError": 0.08851526448995381 },
+          "x2": { "coefficient": 0.42663818688458705, "stdError": 0.09331746987941293 },
+          "W_x1": { "coefficient": 0.05507005597664223, "stdError": 0.3853036974725173 },
+          "W_x2": { "coefficient": -0.048664754715978795, "stdError": 0.15529726110531608 },
+          "rho_Wy": { "coefficient": -0.03005111899939733, "stdError": 0.27737322366722134 }
+        },
+        "rSquared": null,
+        "pseudoR2": 0.9993350274465653,
+        "logLikelihood": 12.139017206335996
+      },
+      "tolerance": { "coefficient": 0.08, "spatialParameter": 0.08, "stdError": 0.4, "rSquared": 0.05, "logLikelihood": 1 }
+    }
+  }
+}

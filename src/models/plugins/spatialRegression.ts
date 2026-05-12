@@ -21,8 +21,15 @@ import {
   spatialSpecs,
   type SpatialSpec,
 } from '../shared/spatialPluginConfig'
-import { makeSpatialRows } from '../shared/spatialContext'
+import { makeSpatialRows, type SpatialContext } from '../shared/spatialContext'
 import type { ModelFitInput, ModelPlugin, ModelResult } from '../types'
+
+const spatialWeightSummary = (context: SpatialContext) => [
+  { label: 'Weight nodes', value: context.diagnostics.nodes },
+  { label: 'Matched spatial keys', value: context.diagnostics.matchedNodes },
+  { label: 'Isolated spatial keys', value: context.diagnostics.isolatedNodes },
+  { label: 'Weight match rate', value: context.diagnostics.sampleMatchRate },
+]
 
 const fitSpatialOls = (spec: SpatialSpec, input: ModelFitInput) => {
   const spatial = makeSpatialRows(input.rows, input.config, spec.kind)
@@ -50,6 +57,7 @@ const fitSpatialOls = (spec: SpatialSpec, input: ModelFitInput) => {
       { label: 'Spatial terms', value: spatialTerms.length },
       { label: 'Weight matrix', value: spatial.context.weightMatrix },
       { label: 'Valid weights', value: spatial.context.validWeights },
+      ...spatialWeightSummary(spatial.context),
       { label: 'R-squared', value: fit.r2 },
       { label: 'Adj R-squared', value: fit.adjustedR2 },
       { label: 'Root MSE', value: fit.rootMse },
@@ -115,6 +123,7 @@ const fitSpatialPanel = (spec: SpatialSpec, input: ModelFitInput) => {
       { label: 'Fixed effects', value: fixedEffects.join(', ') },
       { label: 'Spatial terms', value: spatialTerms.length },
       { label: 'Absorbed df', value: absorbed.absorbedDf },
+      ...spatialWeightSummary(spatial.context),
       { label: 'Within R2', value: fit.r2 },
       { label: 'Root MSE', value: fit.rootMse },
       { label: 'Dropped terms', value: droppedFeatures.length },
@@ -174,6 +183,7 @@ const fitSpatialLogit = (spec: SpatialSpec, input: ModelFitInput) => {
       { label: 'Negative y', value: fit.negatives },
       { label: 'Spatial terms', value: spatialTerms.length },
       { label: 'Weight matrix', value: spatial.context.weightMatrix },
+      ...spatialWeightSummary(spatial.context),
       { label: 'Pseudo R2', value: fit.pseudoR2 },
       { label: 'Accuracy', value: fit.accuracy },
     ],
@@ -204,11 +214,16 @@ const createSpatialPlugin = (spec: SpatialSpec): ModelPlugin => ({
   category: '空间计量',
   keywords: [...spec.keywords, 'spatial econometrics', '空间计量', '空间权重', '空间溢出'],
   maturity: {
-    level: 'preview',
-    label: '预览',
-    description: '使用浏览器内置空间估计实现，适合先完成空间权重与变量设定探索。',
+    level: ['sar', 'slx', 'sdm', 'sem'].includes(spec.kind) ? 'stable' : 'preview',
+    label: ['sar', 'slx', 'sdm', 'sem'].includes(spec.kind) ? '稳定' : '预览',
+    description: ['sar', 'slx', 'sdm', 'sem'].includes(spec.kind)
+      ? '核心空间模型已接入 PySAL/spreg fixture 数值回归测试，适合常规空间计量工作流。'
+      : '复杂空间模型仍为浏览器内预览实现，建议用权威统计软件复核。',
   },
-  limitations: ['当前空间估计运行在浏览器内，建议先用小字段集确认设定后再完整运行。', '当前优先支持 CSV/矩阵/边表 W，.gal/.gwt/.shp/GeoJSON 文件解析仍待增强。'],
+  limitations: [
+    '当前空间估计运行在浏览器内，建议先用小字段集确认设定后再完整运行。',
+    '支持 edge-list、方阵 CSV、GAL/GWT 权重文件；shp/GeoJSON 空间邻接自动构造仍待增强。',
+  ],
   requiresTarget: true,
   targetLabel: spec.kind === 'spatial-logit' ? '二分类因变量 Y' : '因变量 Y',
   featuresLabel: spec.kind === 'panel-sdm' ? '空间键、面板维度、解释变量' : '空间键、解释变量',
