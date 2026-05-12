@@ -51,27 +51,15 @@ type CustomPublicationConfigDraft = Partial<Omit<CustomPublicationConfig, 'forma
   }
 }
 
+export type CustomPublicationFormatRulesDraft = Partial<Omit<CustomPublicationFormatRules, 'starLevels'>> & {
+  starLevels?: Partial<CustomPublicationFormatRules['starLevels']>
+}
+
 export const customPublicationTemplateStorageKey = 'visual-stats-lab:custom-publication-templates'
 export const customPublicationDefaultTemplateStorageKey = 'visual-stats-lab:custom-publication-default-template'
 export const customPublicationDraftStorageKey = 'visual-stats-lab:custom-publication-draft'
 
-const formatPublicationThreshold = (value: number) => {
-  const normalized = Number(value.toFixed(3))
-  return normalized.toString()
-}
-
-export const parenthesisModeLabel = (mode: CustomPublicationFormatRules['parenthesisMode']) => {
-  if (mode === 'stdError') return '标准误'
-  if (mode === 'z') return 'z 值'
-  return 't 值'
-}
-
-export const buildCustomPublicationNote = (formatRules: CustomPublicationFormatRules) =>
-  `注：稳健标准误；括号内为 ${parenthesisModeLabel(formatRules.parenthesisMode)}；* p<${formatPublicationThreshold(formatRules.starLevels.one)}，** p<${formatPublicationThreshold(
-    formatRules.starLevels.two,
-  )}，*** p<${formatPublicationThreshold(formatRules.starLevels.three)}。`
-
-export const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => ({
+const defaultFormatRulesValue: CustomPublicationFormatRules = {
   coefficientDigits: 4,
   statisticDigits: 2,
   nDigits: 0,
@@ -84,7 +72,70 @@ export const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRu
   },
   missingDisplay: '',
   booleanDisplay: 'yes-no',
-})
+}
+
+const digitRanges = {
+  coefficientDigits: { min: 0, max: 8 },
+  statisticDigits: { min: 0, max: 8 },
+  nDigits: { min: 0, max: 4 },
+  r2Digits: { min: 0, max: 6 },
+} satisfies Record<'coefficientDigits' | 'statisticDigits' | 'nDigits' | 'r2Digits', { min: number; max: number }>
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const finiteNumberOr = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
+
+const normalizeDigit = (value: unknown, fallback: number, min: number, max: number) => clamp(Math.trunc(finiteNumberOr(value, fallback)), min, max)
+
+const normalizeThreshold = (value: unknown, fallback: number) => Number(clamp(finiteNumberOr(value, fallback), 0, 1).toFixed(3))
+
+const formatPublicationThreshold = (value: number) => {
+  const normalized = normalizeThreshold(value, 0)
+  return normalized.toString()
+}
+
+export const parenthesisModeLabel = (mode: CustomPublicationFormatRules['parenthesisMode']) => {
+  if (mode === 'stdError') return '标准误'
+  if (mode === 'z') return 'z 值'
+  return 't 值'
+}
+
+const isParenthesisMode = (value: unknown): value is CustomPublicationFormatRules['parenthesisMode'] =>
+  value === 't' || value === 'z' || value === 'stdError'
+
+const isMissingDisplay = (value: unknown): value is CustomPublicationFormatRules['missingDisplay'] =>
+  value === '' || value === '-' || value === '/'
+
+const isBooleanDisplay = (value: unknown): value is CustomPublicationFormatRules['booleanDisplay'] =>
+  value === 'yes-no' || value === 'yes-blank' || value === 'check'
+
+export const defaultCustomPublicationFormatRules = (): CustomPublicationFormatRules => structuredClone(defaultFormatRulesValue)
+
+export const normalizeCustomPublicationFormatRules = (candidate?: CustomPublicationFormatRulesDraft): CustomPublicationFormatRules => {
+  const base = defaultCustomPublicationFormatRules()
+  const one = normalizeThreshold(candidate?.starLevels?.one, base.starLevels.one)
+  const two = Math.min(normalizeThreshold(candidate?.starLevels?.two, base.starLevels.two), one)
+  const three = Math.min(normalizeThreshold(candidate?.starLevels?.three, base.starLevels.three), two)
+
+  return {
+    coefficientDigits: normalizeDigit(candidate?.coefficientDigits, base.coefficientDigits, digitRanges.coefficientDigits.min, digitRanges.coefficientDigits.max),
+    statisticDigits: normalizeDigit(candidate?.statisticDigits, base.statisticDigits, digitRanges.statisticDigits.min, digitRanges.statisticDigits.max),
+    nDigits: normalizeDigit(candidate?.nDigits, base.nDigits, digitRanges.nDigits.min, digitRanges.nDigits.max),
+    r2Digits: normalizeDigit(candidate?.r2Digits, base.r2Digits, digitRanges.r2Digits.min, digitRanges.r2Digits.max),
+    parenthesisMode: isParenthesisMode(candidate?.parenthesisMode) ? candidate.parenthesisMode : base.parenthesisMode,
+    starLevels: { one, two, three },
+    missingDisplay: isMissingDisplay(candidate?.missingDisplay) ? candidate.missingDisplay : base.missingDisplay,
+    booleanDisplay: isBooleanDisplay(candidate?.booleanDisplay) ? candidate.booleanDisplay : base.booleanDisplay,
+  }
+}
+
+export const buildCustomPublicationNote = (formatRules: CustomPublicationFormatRulesDraft) => {
+  const normalizedRules = normalizeCustomPublicationFormatRules(formatRules)
+
+  return `注：稳健标准误；括号内为 ${parenthesisModeLabel(normalizedRules.parenthesisMode)}；* p<${formatPublicationThreshold(
+    normalizedRules.starLevels.one,
+  )}，** p<${formatPublicationThreshold(normalizedRules.starLevels.two)}，*** p<${formatPublicationThreshold(normalizedRules.starLevels.three)}。`
+}
 
 export const defaultCustomPublicationConfig = (): CustomPublicationConfig => ({
   mode: 'current-three-line',
@@ -116,14 +167,7 @@ export const normalizeCustomPublicationConfig = (candidate?: CustomPublicationCo
     statisticOrder: candidate?.statisticOrder ?? base.statisticOrder,
     statisticLabels: candidate?.statisticLabels ?? base.statisticLabels,
     disabledStatisticIds: candidate?.disabledStatisticIds ?? base.disabledStatisticIds,
-    formatRules: {
-      ...base.formatRules,
-      ...(candidate?.formatRules ?? {}),
-      starLevels: {
-        ...base.formatRules.starLevels,
-        ...(candidate?.formatRules?.starLevels ?? {}),
-      },
-    },
+    formatRules: normalizeCustomPublicationFormatRules(candidate?.formatRules),
   }
 }
 

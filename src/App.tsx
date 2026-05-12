@@ -37,6 +37,11 @@ import type { ColumnType, Row } from './data/types'
 import type { ParameterField } from './models/modelConfig'
 import { getModelMaturity, getModelPlugin, getModelTaskGroup, getModelUseCase } from './models/registry'
 import type { InferenceConfig, ModelParamValue, SpatialWeightsParam } from './models/types'
+import {
+  buildModelComparisonSources,
+  buildModelComparisonTable,
+  createCustomPublicationConfigFromComparison,
+} from './models/modelComparison'
 import { formatDuration } from './workers/runProgress'
 import type { WorkflowStep } from './hooks/useModelRun'
 import { usePublicationWorkbench } from './hooks/usePublicationWorkbench'
@@ -101,6 +106,7 @@ function App() {
   const [exportError, setExportError] = useState('')
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('workbench')
   const [dataPreviewScrollTop, setDataPreviewScrollTop] = useState(0)
+  const [selectedModelComparisonSourceIds, setSelectedModelComparisonSourceIds] = useState<string[] | null>(null)
 
   const session = useWorkbenchSession({
     workspaceTab,
@@ -236,6 +242,8 @@ function App() {
   const toggleSnapshotSelection = actions.snapshots.toggleSnapshotSelection
   const toggleAllSnapshots = actions.snapshots.toggleAllSnapshots
   const setSelectedSnapshotFlag = actions.snapshots.setSelectedSnapshotFlag
+  const updateSnapshotNote = actions.snapshots.updateSnapshotNote
+  const setSnapshotTags = actions.snapshots.setSnapshotTags
   const deleteSelectedSnapshots = actions.snapshots.deleteSelectedSnapshots
   const deleteSnapshot = actions.snapshots.deleteSnapshot
 
@@ -320,6 +328,7 @@ function App() {
   }
 
   const selectedExportItemSet = useMemo(() => new Set(selectedExportItemIds), [selectedExportItemIds])
+  const isPublicationSourceListEnabled = workspaceTab === 'publication' || isExportModalOpen
   const isPublicationPreviewEnabled = workspaceTab === 'publication' || (isExportModalOpen && selectedExportItemSet.has('custom-publication'))
   const publicationWorkbench = usePublicationWorkbench({
     result,
@@ -328,6 +337,7 @@ function App() {
     sanitizedConfig,
     dataRoles,
     snapshots,
+    isSourceListEnabled: isPublicationSourceListEnabled,
     isPreviewEnabled: isPublicationPreviewEnabled,
     getModelShortName: (modelId) => getModelPlugin(modelId).shortName,
   })
@@ -349,6 +359,41 @@ function App() {
   const customPublicationPreviewHtml = publicationState.previewHtml
   const canExportCustomPublication = publicationState.canExport && !isExporting
   const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
+  const modelComparisonSources = useMemo(
+    () =>
+      workspaceTab === 'publication'
+        ? buildModelComparisonSources({
+            current:
+              result && hasActiveModel
+                ? {
+                    result,
+                    modelId: activeModel.id,
+                    modelName: activeModel.name,
+                    modelShortName: activeModel.shortName || activeModel.name,
+                    formula: activeFormula,
+                    modelConfig: sanitizedConfig,
+                    dataRoles,
+                  }
+                : undefined,
+            snapshots,
+          })
+        : [],
+    [activeFormula, activeModel, dataRoles, hasActiveModel, result, sanitizedConfig, snapshots, workspaceTab],
+  )
+  const defaultModelComparisonSourceIds = useMemo(
+    () => modelComparisonSources.slice(0, 4).map((source) => source.id),
+    [modelComparisonSources],
+  )
+  const effectiveModelComparisonSourceIds = useMemo(() => {
+    const availableIdSet = new Set(modelComparisonSources.map((source) => source.id))
+    const selectedIds = selectedModelComparisonSourceIds ?? defaultModelComparisonSourceIds
+    return selectedIds.filter((id) => availableIdSet.has(id))
+  }, [defaultModelComparisonSourceIds, modelComparisonSources, selectedModelComparisonSourceIds])
+  const modelComparisonSelectedSet = useMemo(() => new Set(effectiveModelComparisonSourceIds), [effectiveModelComparisonSourceIds])
+  const modelComparisonTable = useMemo(
+    () => (workspaceTab === 'publication' ? buildModelComparisonTable(modelComparisonSources, effectiveModelComparisonSourceIds) : null),
+    [effectiveModelComparisonSourceIds, modelComparisonSources, workspaceTab],
+  )
   const exportItems = useMemo<ExportItem[]>(() => {
     if (!result) return []
     const hasCoefficientTable = result.tables.some((table) => table.id === 'coefficients')
@@ -408,6 +453,20 @@ function App() {
     setWorkspaceTab('workbench')
   }
 
+  const toggleModelComparisonSource = (sourceId: string) => {
+    setSelectedModelComparisonSourceIds((current) => {
+      const base = current ?? effectiveModelComparisonSourceIds
+      return base.includes(sourceId) ? base.filter((id) => id !== sourceId) : [...base, sourceId]
+    })
+  }
+
+  const sendModelComparisonToCustomPublication = () => {
+    if (effectiveModelComparisonSourceIds.length === 0) return
+    publicationActions.replaceConfig(
+      createCustomPublicationConfigFromComparison(customPublicationConfig, modelComparisonSources, effectiveModelComparisonSourceIds),
+    )
+  }
+
   const applyCustomPublicationTemplate = publicationActions.applyTemplate
   const applyDefaultCustomPublicationTemplate = publicationActions.applyDefaultTemplate
   const duplicateCustomPublicationTemplate = publicationActions.duplicateTemplate
@@ -433,7 +492,7 @@ function App() {
         description: modelMaturity.description,
       },
       runLogs,
-      baselinePublicationTable: buildPublicationRegressionTable(),
+      baselinePublicationTable: selectedIds.includes('three-line') ? buildPublicationRegressionTable() : null,
       customPublicationTable: selectedIds.includes('custom-publication') ? buildCustomPublicationTableFromConfig() : null,
     }
   }
@@ -1232,11 +1291,11 @@ function App() {
       displayTitle={customPublicationDisplayTitle}
       templateStatus={publicationTemplateStatus}
       isDefaultTableMode={isCustomPublicationDefaultTableMode}
+      comparisonSources={modelComparisonSources}
+      comparisonSelectedIds={modelComparisonSelectedSet}
+      comparisonTable={modelComparisonTable}
       isExporting={isExporting}
-      canExport={canExportCustomPublication}
       exportError={workspaceTab === 'publication' ? exportError : ''}
-      onClose={closePublicationWorkbench}
-      onExport={exportCustomPublicationOnly}
       onStartCustom={startCustomPublicationEditing}
       onRestoreDefaults={restoreCustomPublicationDefaults}
       onResetOrdering={resetCustomPublicationOrdering}
@@ -1262,6 +1321,8 @@ function App() {
       onRenameTemplate={renameCustomPublicationTemplate}
       onSetDefaultTemplate={publicationActions.setDefaultTemplate}
       onDeleteTemplate={deleteCustomPublicationTemplate}
+      onToggleComparisonSource={toggleModelComparisonSource}
+      onSendComparisonToCustom={sendModelComparisonToCustomPublication}
     />
   )
 
@@ -1558,8 +1619,33 @@ function App() {
                     onClick={() => (isSnapshotManageMode ? toggleSnapshotSelection(snapshot.id) : restoreSnapshot(snapshot))}
                   >
                     <em>{snapshot.formula}</em>
-                    <small>{snapshot.result ? '含结果' : '仅配置'} · {new Date(snapshot.createdAt).toLocaleDateString()}</small>
+                    <small>
+                      {snapshot.result ? '含结果' : '仅配置'} · {snapshot.runSummary ? `${snapshot.runSummary.metricCount} 指标 · ${snapshot.runSummary.tableCount} 表` : '无运行摘要'} · {new Date(snapshot.createdAt).toLocaleDateString()}
+                    </small>
                   </button>
+                  {snapshot.tags.length > 0 || snapshot.note ? (
+                    <div className="snapshot-asset-meta">
+                      {snapshot.tags.length > 0 ? (
+                        <span>{snapshot.tags.map((tag) => <em key={tag}>{tag}</em>)}</span>
+                      ) : null}
+                      {snapshot.note ? <p>{snapshot.note}</p> : null}
+                    </div>
+                  ) : null}
+                  {isSnapshotManageMode ? (
+                    <div className="snapshot-asset-editor">
+                      <input
+                        value={snapshot.tags.join(', ')}
+                        placeholder="标签，用逗号分隔"
+                        onChange={(event) => setSnapshotTags(snapshot.id, event.target.value.split(/[,，]/))}
+                      />
+                      <textarea
+                        value={snapshot.note}
+                        placeholder="快照备注"
+                        rows={2}
+                        onChange={(event) => updateSnapshotNote(snapshot.id, event.target.value)}
+                      />
+                    </div>
+                  ) : null}
                 </article>
               ))
             )}

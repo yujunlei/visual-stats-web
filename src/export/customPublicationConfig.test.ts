@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildCustomPublicationNote, defaultCustomPublicationConfig, normalizeCustomPublicationConfig } from './customPublicationConfig'
+import {
+  buildCustomPublicationNote,
+  defaultCustomPublicationConfig,
+  normalizeCustomPublicationConfig,
+  normalizeCustomPublicationFormatRules,
+} from './customPublicationConfig'
 
 describe('custom publication config', () => {
   it('defaults to current three-line mode', () => {
@@ -34,6 +39,36 @@ describe('custom publication config', () => {
     expect(config.mode).toBe('custom')
     expect(config.formatRules.coefficientDigits).toBe(3)
     expect(config.formatRules.starLevels).toEqual({ one: 0.2, two: 0.05, three: 0.01 })
+  })
+
+  it('normalizes invalid display rules from drafts and templates', () => {
+    const rules = normalizeCustomPublicationFormatRules({
+      coefficientDigits: 99,
+      statisticDigits: -2,
+      nDigits: Number.NaN,
+      r2Digits: 99.8,
+      parenthesisMode: 'bad' as never,
+      missingDisplay: 'bad' as never,
+      booleanDisplay: 'bad' as never,
+      starLevels: { one: 2, two: -1, three: 0.12345 },
+    })
+
+    expect(rules.coefficientDigits).toBe(8)
+    expect(rules.statisticDigits).toBe(0)
+    expect(rules.nDigits).toBe(0)
+    expect(rules.r2Digits).toBe(6)
+    expect(rules.parenthesisMode).toBe('t')
+    expect(rules.missingDisplay).toBe('')
+    expect(rules.booleanDisplay).toBe('yes-no')
+    expect(rules.starLevels).toEqual({ one: 1, two: 0, three: 0 })
+  })
+
+  it('preserves threshold order semantics when one field breaks the order', () => {
+    const rules = normalizeCustomPublicationFormatRules({
+      starLevels: { one: 0.04, two: 0.05, three: 0.08 },
+    })
+
+    expect(rules.starLevels).toEqual({ one: 0.04, two: 0.04, three: 0.04 })
   })
 
   it('builds the note from parenthesis and star rules', () => {

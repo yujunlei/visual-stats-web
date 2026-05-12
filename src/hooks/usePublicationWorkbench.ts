@@ -11,7 +11,7 @@ import {
   loadCustomPublicationTemplates,
   type CustomPublicationColumnDraft,
   type CustomPublicationConfig,
-  type CustomPublicationFormatRules,
+  type CustomPublicationFormatRulesDraft,
   type CustomPublicationTemplate,
 } from '../export/customPublicationConfig'
 import {
@@ -58,6 +58,7 @@ export type UsePublicationWorkbenchInput = {
   sanitizedConfig: ModelConfig
   dataRoles: DataRoles
   snapshots: PublicationSnapshotSource[]
+  isSourceListEnabled?: boolean
   isPreviewEnabled: boolean
   getModelShortName?: (modelId: string) => string
   createId?: () => string
@@ -100,12 +101,13 @@ export type PublicationWorkbenchState = {
 
 export type PublicationWorkbenchActions = {
   startCustom: () => void
+  replaceConfig: (nextConfig: CustomPublicationConfig) => void
   restoreDefaults: () => void
   resetOrdering: () => void
   saveTemplate: () => void
   applyDefaultTemplate: () => void
   updateText: (patch: Partial<Pick<CustomPublicationConfig, 'title' | 'note'>>) => void
-  updateFormatRules: (patch: Partial<CustomPublicationFormatRules>) => void
+  updateFormatRules: (patch: CustomPublicationFormatRulesDraft) => void
   toggleSource: (sourceId: string) => void
   updateColumn: (sourceId: string, patch: Partial<Omit<CustomPublicationColumnDraft, 'id'>>) => void
   moveColumn: (sourceId: string, direction: CustomPublicationDirection) => void
@@ -317,6 +319,9 @@ export function createPublicationWorkbenchActions({
     startCustom: () => {
       setConfig((current) => customPublicationAsCustom(current, defaultSourceIds))
     },
+    replaceConfig: (nextConfig) => {
+      setConfig(nextConfig)
+    },
     restoreDefaults: () => {
       setConfig(defaultCustomPublicationConfig())
     },
@@ -429,6 +434,7 @@ export function usePublicationWorkbench({
   sanitizedConfig,
   dataRoles,
   snapshots,
+  isSourceListEnabled = true,
   isPreviewEnabled,
   getModelShortName,
   createId = defaultCreateId,
@@ -453,8 +459,10 @@ export function usePublicationWorkbench({
   }, [config])
 
   const sources = useMemo(
-    () =>
-      buildPublicationSources({
+    () => {
+      if (!isSourceListEnabled) return []
+
+      return buildPublicationSources({
         current:
           result && hasActiveModel && activeModel
             ? {
@@ -468,8 +476,9 @@ export function usePublicationWorkbench({
             : undefined,
         snapshots,
         getModelShortName: getModelShortName ?? ((modelId) => modelId),
-      }),
-    [activeModel, dataRoles, getModelShortName, hasActiveModel, result, sanitizedConfig, snapshots],
+      })
+    },
+    [activeModel, dataRoles, getModelShortName, hasActiveModel, isSourceListEnabled, result, sanitizedConfig, snapshots],
   )
   const hasPublicationSources = useMemo(() => hasCoefficientPublicationSource(sources), [sources])
   const hasCurrentPublicationSource = useMemo(() => sources.some((source) => source.id === 'current'), [sources])

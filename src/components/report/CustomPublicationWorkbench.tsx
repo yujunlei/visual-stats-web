@@ -1,15 +1,15 @@
-import { AlertTriangle, Download } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp } from 'lucide-react'
 import type {
   CustomPublicationColumnDraft,
   CustomPublicationConfig,
   CustomPublicationFormatRules,
+  CustomPublicationFormatRulesDraft,
   CustomPublicationTemplate,
 } from '../../export/customPublicationConfig'
 import type { CustomPublicationDragItem } from '../../export/customPublicationActions'
 import type { CustomPublicationOption, CustomPublicationStatisticOption } from '../../export/customPublicationOptions'
 import type { CustomPublicationSource, PublicationTable } from '../../export/publicationTables'
-
-type ExportFormat = 'csv' | 'excel' | 'html' | 'word' | 'json'
+import type { ModelComparisonSource, ModelComparisonTable } from '../../models/modelComparison'
 
 type CustomPublicationWorkbenchProps = {
   config: CustomPublicationConfig
@@ -27,18 +27,18 @@ type CustomPublicationWorkbenchProps = {
   displayTitle: string
   templateStatus: string
   isDefaultTableMode: boolean
+  comparisonSources: ModelComparisonSource[]
+  comparisonSelectedIds: Set<string>
+  comparisonTable: ModelComparisonTable | null
   isExporting: boolean
-  canExport: boolean
   exportError: string
-  onClose: () => void
-  onExport: (format?: ExportFormat) => void
   onStartCustom: () => void
   onRestoreDefaults: () => void
   onResetOrdering: () => void
   onSaveTemplate: () => void
   onApplyDefaultTemplate: () => void
   onUpdateText: (patch: Partial<Pick<CustomPublicationConfig, 'title' | 'note'>>) => void
-  onUpdateFormatRules: (patch: Partial<CustomPublicationFormatRules>) => void
+  onUpdateFormatRules: (patch: CustomPublicationFormatRulesDraft) => void
   onToggleSource: (sourceId: string) => void
   onUpdateColumn: (sourceId: string, patch: Partial<Omit<CustomPublicationColumnDraft, 'id'>>) => void
   onMoveColumn: (sourceId: string, direction: 'up' | 'down') => void
@@ -57,6 +57,8 @@ type CustomPublicationWorkbenchProps = {
   onRenameTemplate: (templateId: string, name: string) => void
   onSetDefaultTemplate: (templateId: string) => void
   onDeleteTemplate: (templateId: string) => void
+  onToggleComparisonSource: (sourceId: string) => void
+  onSendComparisonToCustom: () => void
 }
 
 type CustomPublicationExportSummaryProps = {
@@ -82,6 +84,8 @@ const formatModeLabel = (config: CustomPublicationConfig) => {
   return `${config.formatRules.coefficientDigits} 位系数 · ${parenthesis} · ${config.formatRules.booleanDisplay === 'yes-blank' ? 'Yes/空白' : 'Yes/No'}`
 }
 
+const numberFromInput = (value: string) => (value.trim() === '' ? Number.NaN : Number(value))
+
 export function CustomPublicationWorkbench({
   config,
   sources,
@@ -98,11 +102,11 @@ export function CustomPublicationWorkbench({
   displayTitle,
   templateStatus,
   isDefaultTableMode,
+  comparisonSources,
+  comparisonSelectedIds,
+  comparisonTable,
   isExporting,
-  canExport,
   exportError,
-  onClose,
-  onExport,
   onStartCustom,
   onRestoreDefaults,
   onResetOrdering,
@@ -128,6 +132,8 @@ export function CustomPublicationWorkbench({
   onRenameTemplate,
   onSetDefaultTemplate,
   onDeleteTemplate,
+  onToggleComparisonSource,
+  onSendComparisonToCustom,
 }: CustomPublicationWorkbenchProps) {
   const visibleVariableCount = variableOptions.filter((option) => !hiddenVariableIds.has(option.id)).length
   const enabledStatisticCount = statisticOptions.filter((option) => !disabledStatisticIds.has(option.id)).length
@@ -141,15 +147,6 @@ export function CustomPublicationWorkbench({
             <span className="panel__label">Paper Table Workspace</span>
             <h2>{displayTitle}</h2>
             <p>把来源列、变量行、统计行和注释整理成一张适合 Excel、Word 和 HTML 导出的论文表。</p>
-          </div>
-          <div className="publication-workbench__hero-actions">
-            <button className="secondary-button is-subtle" type="button" onClick={onClose}>
-              返回建模
-            </button>
-            <button className="primary-button" type="button" onClick={() => onExport('excel')} disabled={!canExport}>
-              <Download size={14} />
-              {isExporting ? '导出中' : '导出自定义表'}
-            </button>
           </div>
         </section>
 
@@ -218,6 +215,66 @@ export function CustomPublicationWorkbench({
                     <textarea value={config.note} disabled={isExporting} rows={3} onChange={(event) => onUpdateText({ note: event.target.value })} />
                   </label>
                 </div>
+              </section>
+
+              <section className="report-editor-section">
+                <div className="report-editor-section__header">
+                  <div>
+                    <strong>模型比较</strong>
+                    <span>从当前结果和历史快照中选择多个结果，生成横向比较表，也可以一键送入自定义论文表。</span>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={onSendComparisonToCustom} disabled={isExporting || !comparisonTable}>
+                    送入自定义表
+                  </button>
+                </div>
+                {comparisonSources.length === 0 ? (
+                  <div className="empty-history">暂无可比较结果。运行模型或保存带结果的快照后会出现在这里。</div>
+                ) : (
+                  <>
+                    <div className="model-comparison-source-list">
+                      {comparisonSources.map((source) => (
+                        <label className="model-comparison-source" key={source.id}>
+                          <input
+                            type="checkbox"
+                            checked={comparisonSelectedIds.has(source.id)}
+                            disabled={isExporting}
+                            onChange={() => onToggleComparisonSource(source.id)}
+                          />
+                          <span>
+                            <strong>{source.label}</strong>
+                            <small>{source.modelShortName} · {source.formula}</small>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    {comparisonTable ? (
+                      <div className="model-comparison-table-wrap">
+                        <table className="model-comparison-table">
+                          <thead>
+                            <tr>
+                              <th>项目</th>
+                              {comparisonTable.columns.map((column) => (
+                                <th key={column.id}>{column.label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {comparisonTable.rows.map((row) => (
+                              <tr key={row.id} className={`is-${row.role}`}>
+                                <th>{row.label}</th>
+                                {row.values.map((value, index) => (
+                                  <td key={`${row.id}-${comparisonTable.columns[index]?.id ?? index}`}>{value}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="empty-history">至少选择一个结果后生成比较表。</div>
+                    )}
+                  </>
+                )}
               </section>
 
               <section className="report-editor-section">
@@ -345,10 +402,10 @@ export function CustomPublicationWorkbench({
                   <small>预览、Excel、Word 和 HTML 使用同一套黑白三线表规则；不输出编辑器里的绿色提示角或换行标记。</small>
                 </div>
                 <div className="custom-publication-format-grid">
-                  <label><span>系数小数位</span><input type="number" min="0" max="8" value={config.formatRules.coefficientDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ coefficientDigits: Number(event.target.value) })} /></label>
-                  <label><span>括号统计小数位</span><input type="number" min="0" max="8" value={config.formatRules.statisticDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ statisticDigits: Number(event.target.value) })} /></label>
-                  <label><span>N 小数位</span><input type="number" min="0" max="4" value={config.formatRules.nDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ nDigits: Number(event.target.value) })} /></label>
-                  <label><span>Adj-R² 小数位</span><input type="number" min="0" max="6" value={config.formatRules.r2Digits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ r2Digits: Number(event.target.value) })} /></label>
+                  <label><span>系数小数位</span><input type="number" min="0" max="8" step="1" inputMode="numeric" value={config.formatRules.coefficientDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ coefficientDigits: numberFromInput(event.target.value) })} /></label>
+                  <label><span>括号统计小数位</span><input type="number" min="0" max="8" step="1" inputMode="numeric" value={config.formatRules.statisticDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ statisticDigits: numberFromInput(event.target.value) })} /></label>
+                  <label><span>N 小数位</span><input type="number" min="0" max="4" step="1" inputMode="numeric" value={config.formatRules.nDigits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ nDigits: numberFromInput(event.target.value) })} /></label>
+                  <label><span>Adj-R² 小数位</span><input type="number" min="0" max="6" step="1" inputMode="numeric" value={config.formatRules.r2Digits} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ r2Digits: numberFromInput(event.target.value) })} /></label>
                   <label>
                     <span>括号统计</span>
                     <select value={config.formatRules.parenthesisMode} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ parenthesisMode: event.target.value as CustomPublicationFormatRules['parenthesisMode'] })}>
@@ -373,9 +430,9 @@ export function CustomPublicationWorkbench({
                       <option value="check">勾选语义</option>
                     </select>
                   </label>
-                  <label><span>* 阈值</span><input type="number" step="0.001" min="0" max="1" value={config.formatRules.starLevels.one} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { ...config.formatRules.starLevels, one: Number(event.target.value) } })} /></label>
-                  <label><span>** 阈值</span><input type="number" step="0.001" min="0" max="1" value={config.formatRules.starLevels.two} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { ...config.formatRules.starLevels, two: Number(event.target.value) } })} /></label>
-                  <label><span>*** 阈值</span><input type="number" step="0.001" min="0" max="1" value={config.formatRules.starLevels.three} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { ...config.formatRules.starLevels, three: Number(event.target.value) } })} /></label>
+                  <label><span>* 阈值</span><input type="number" step="0.001" min="0" max="1" inputMode="decimal" value={config.formatRules.starLevels.one} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { one: numberFromInput(event.target.value) } })} /></label>
+                  <label><span>** 阈值</span><input type="number" step="0.001" min="0" max="1" inputMode="decimal" value={config.formatRules.starLevels.two} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { two: numberFromInput(event.target.value) } })} /></label>
+                  <label><span>*** 阈值</span><input type="number" step="0.001" min="0" max="1" inputMode="decimal" value={config.formatRules.starLevels.three} disabled={isExporting} onChange={(event) => onUpdateFormatRules({ starLevels: { three: numberFromInput(event.target.value) } })} /></label>
                 </div>
               </section>
 
@@ -416,9 +473,6 @@ export function CustomPublicationWorkbench({
                   <h2>论文表预览</h2>
                   <p>预览会实时反映列顺序、变量显示、统计行与注释内容。</p>
                 </div>
-                <button className="secondary-button is-subtle" type="button" onClick={() => onExport('excel')} disabled={!canExport}>
-                  导出 Excel
-                </button>
               </div>
               {previewTable ? (
                 <div className="publication-preview-card__body">
@@ -506,10 +560,30 @@ function RowsEditor<TOption extends CustomPublicationOption>({
                   <input type="checkbox" checked={active} disabled={disabled} onChange={() => onToggle(option.id)} />
                   <span><strong>{option.label}</strong><small>{getDetail(option)}</small></span>
                 </label>
-                <input className="custom-publication-row__rename" value={getValue(option)} disabled={disabled} onChange={(event) => onRename(option.id, event.target.value)} />
-                <div className="custom-publication-row__actions">
-                  <button className="secondary-button" type="button" disabled={disabled || index === 0} onClick={() => onMove(option.id, 'up')}>上移</button>
-                  <button className="secondary-button" type="button" disabled={disabled || index === options.length - 1} onClick={() => onMove(option.id, 'down')}>下移</button>
+                <div className="custom-publication-row__edit-line">
+                  <input className="custom-publication-row__rename" value={getValue(option)} disabled={disabled} onChange={(event) => onRename(option.id, event.target.value)} />
+                  <div className="custom-publication-row__actions">
+                    <button
+                      className="custom-publication-row__move-button"
+                      type="button"
+                      title="上移"
+                      aria-label="上移"
+                      disabled={disabled || index === 0}
+                      onClick={() => onMove(option.id, 'up')}
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                    <button
+                      className="custom-publication-row__move-button"
+                      type="button"
+                      title="下移"
+                      aria-label="下移"
+                      disabled={disabled || index === options.length - 1}
+                      onClick={() => onMove(option.id, 'down')}
+                    >
+                      <ArrowDown size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             )

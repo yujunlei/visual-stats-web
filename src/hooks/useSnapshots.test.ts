@@ -41,6 +41,8 @@ describe('useSnapshots helpers', () => {
       favorite: false,
       pinned: false,
       tags: [],
+      note: '',
+      runSummary: null,
     })
     expect(snapshot.result).toBeUndefined()
     expect(snapshot.savedResultAt).toBeUndefined()

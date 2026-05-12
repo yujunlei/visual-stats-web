@@ -48,6 +48,24 @@ describe('customPublicationActions', () => {
     expect(preserved.note).toBe('手写注释')
   })
 
+  it('normalizes format rule updates before saving them to config', () => {
+    const config = defaultCustomPublicationConfig()
+    const next = updateCustomPublicationFormatRules(config, ['current'], {
+      coefficientDigits: 99,
+      statisticDigits: Number.NaN,
+      nDigits: -10,
+      r2Digits: 9.9,
+      starLevels: { one: 0.02, two: 0.5 },
+    })
+
+    expect(next.formatRules.coefficientDigits).toBe(8)
+    expect(next.formatRules.statisticDigits).toBe(2)
+    expect(next.formatRules.nDigits).toBe(0)
+    expect(next.formatRules.r2Digits).toBe(6)
+    expect(next.formatRules.starLevels).toEqual({ one: 0.02, two: 0.02, three: 0.01 })
+    expect(next.note).toBe(buildCustomPublicationNote(next.formatRules))
+  })
+
   it('toggles sources from the effective source ids', () => {
     const config = defaultCustomPublicationConfig()
     const removed = toggleCustomPublicationSource(config, 'current', ['current'], ['current', 'snapshot:1'])

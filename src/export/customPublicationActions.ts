@@ -1,9 +1,10 @@
 import {
   buildCustomPublicationNote,
   normalizeCustomPublicationConfig,
+  normalizeCustomPublicationFormatRules,
   type CustomPublicationColumnDraft,
   type CustomPublicationConfig,
-  type CustomPublicationFormatRules,
+  type CustomPublicationFormatRulesDraft,
   type CustomPublicationTemplate,
 } from './customPublicationConfig'
 
@@ -54,14 +55,17 @@ export const updateCustomPublicationText = (
 export const updateCustomPublicationFormatRules = (
   current: CustomPublicationConfig,
   defaultSourceIds: string[],
-  patch: Partial<CustomPublicationFormatRules>,
+  patch: CustomPublicationFormatRulesDraft,
 ) => {
   const customCurrent = customPublicationAsCustom(current, defaultSourceIds)
-  const nextFormatRules = {
+  const nextFormatRules = normalizeCustomPublicationFormatRules({
     ...customCurrent.formatRules,
     ...patch,
-    starLevels: patch.starLevels ? patch.starLevels : customCurrent.formatRules.starLevels,
-  }
+    starLevels: {
+      ...customCurrent.formatRules.starLevels,
+      ...(patch.starLevels ?? {}),
+    },
+  })
   const currentAutoNote = buildCustomPublicationNote(customCurrent.formatRules)
 
   return {

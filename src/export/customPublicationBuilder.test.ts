@@ -103,4 +103,34 @@ describe('custom publication builder', () => {
     expect(table.rows.some((row) => row.role === 'metric' && row.label === 'N')).toBe(true)
     expect(table.rows.some((row) => row.role === 'metric' && row.label === 'Adj-R²')).toBe(false)
   })
+
+  it('keeps custom statistic rows in the UI order', () => {
+    const table = buildCustomPublicationTableFromConfig({
+      config: {
+        ...defaultCustomPublicationConfig(),
+        mode: 'custom' as const,
+      },
+      isDefaultTableMode: false,
+      baselineTable: null,
+      selectedSources: [
+        {
+          ...source,
+          dimensions: { idFields: ['id'], timeField: 'year', groupFields: [] },
+        },
+      ],
+      orderedVariableOptions: [{ id: 'x', label: 'X' }],
+      statisticOptions: [
+        { id: 'adj-r2', label: 'Adj-R²', detail: '调整 R²' },
+        { id: 'n', label: 'N', detail: '样本量' },
+        { id: 'fe:year FE', label: 'year FE', detail: '固定效应统计行' },
+        { id: 'controls', label: 'Controls', detail: '控制变量行' },
+      ],
+      hiddenVariableIds: new Set(),
+      disabledStatisticIds: new Set(),
+    })
+
+    expect(table).not.toBeNull()
+    if (!table) return
+    expect(table.rows.filter((row) => row.role === 'metric' || row.role === 'fixedEffect').map((row) => row.label)).toEqual(['Adj-R²', 'N', 'year FE', 'Controls'])
+  })
 })

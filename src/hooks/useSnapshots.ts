@@ -3,40 +3,19 @@ import type { DataPrepConfig, RunLogEntry } from '../data/preprocess'
 import type { Row, TypeOverrides } from '../data/types'
 import type { DataRoles } from '../data/dataRoles'
 import {
+  buildSnapshotRunSummary,
   filterSnapshotsByView,
   getSnapshotSummaryText,
   getVisibleSnapshots,
+  normalizeWorkbenchSnapshots,
   sortSnapshots,
   type SnapshotViewFilter,
+  type WorkbenchSnapshot,
 } from '../data/snapshots'
 import type { InferenceConfig, ModelConfig, ModelPlugin, ModelResult } from '../models/types'
 import { snapshotStorageKey } from '../constants/workbench'
 
-export type WorkbenchSnapshot = {
-  id: string
-  createdAt: string
-  updatedAt?: string
-  label: string
-  fileName: string
-  rowCount: number
-  fieldCount: number
-  modelId: string
-  modelName: string
-  modelShortName?: string
-  formula: string
-  rows: Row[]
-  dataRoles: DataRoles
-  typeOverrides: TypeOverrides
-  prepConfig: DataPrepConfig
-  inferenceConfig: InferenceConfig
-  modelConfig: ModelConfig
-  result?: ModelResult
-  resultLogs?: RunLogEntry[]
-  savedResultAt?: string
-  favorite?: boolean
-  pinned?: boolean
-  tags?: string[]
-}
+export type { WorkbenchSnapshot } from '../data/snapshots'
 
 export type SnapshotDraftInput = {
   activeModel: ModelPlugin
@@ -55,7 +34,7 @@ export type SnapshotDraftInput = {
 export const loadSnapshots = () => {
   try {
     const stored = window.localStorage.getItem(snapshotStorageKey)
-    return stored ? (JSON.parse(stored) as WorkbenchSnapshot[]) : []
+    return stored ? normalizeWorkbenchSnapshots(JSON.parse(stored) as Partial<WorkbenchSnapshot>[]) : []
   } catch {
     return []
   }
@@ -85,7 +64,9 @@ export function createWorkbenchSnapshot(input: SnapshotDraftInput, now = new Dat
     savedResultAt: input.result ? now : undefined,
     favorite: false,
     pinned: false,
+    note: '',
     tags: [],
+    runSummary: buildSnapshotRunSummary(input.result ?? undefined, input.result ? now : undefined, input.resultLogs),
   }
 }
 
@@ -191,6 +172,36 @@ export function useSnapshots({
     )
   }
 
+  const updateSnapshotNote = (snapshotId: string, note: string) => {
+    persistSnapshots(
+      snapshots.map((snapshot) => (snapshot.id === snapshotId ? { ...snapshot, note, updatedAt: new Date().toISOString() } : snapshot)),
+    )
+  }
+
+  const setSnapshotTags = (snapshotId: string, tags: string[]) => {
+    const normalizedTags = Array.from(new Set(tags.map((tag) => tag.trim()).filter(Boolean)))
+    persistSnapshots(
+      snapshots.map((snapshot) =>
+        snapshot.id === snapshotId ? { ...snapshot, tags: normalizedTags, updatedAt: new Date().toISOString() } : snapshot,
+      ),
+    )
+  }
+
+  const toggleSnapshotTag = (snapshotId: string, tag: string) => {
+    const normalizedTag = tag.trim()
+    if (!normalizedTag) return
+
+    persistSnapshots(
+      snapshots.map((snapshot) => {
+        if (snapshot.id !== snapshotId) return snapshot
+        const tags = snapshot.tags.includes(normalizedTag)
+          ? snapshot.tags.filter((entry) => entry !== normalizedTag)
+          : [...snapshot.tags, normalizedTag]
+        return { ...snapshot, tags, updatedAt: new Date().toISOString() }
+      }),
+    )
+  }
+
   const deleteSelectedSnapshots = () => {
     if (selectedSnapshotIds.length === 0) return
     const confirmed = confirmDelete(`确定删除选中的 ${selectedSnapshotIds.length} 条快照吗？`)
@@ -241,6 +252,9 @@ export function useSnapshots({
     toggleSnapshotSelection,
     toggleAllSnapshots,
     setSelectedSnapshotFlag,
+    updateSnapshotNote,
+    setSnapshotTags,
+    toggleSnapshotTag,
     deleteSelectedSnapshots,
     deleteSnapshot,
   }

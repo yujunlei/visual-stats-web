@@ -1,5 +1,6 @@
 import { formatNumber } from '../data/tableUtils'
 import type { ModelConfig, ModelResult } from '../models/types'
+import { normalizeCustomPublicationFormatRules } from './customPublicationConfig'
 
 export type PublicationTableKind = 'baseline' | 'heterogeneity' | 'robustness' | 'endogeneity' | 'custom'
 
@@ -231,7 +232,7 @@ export const buildCustomPublicationTable = ({
   formatRules,
 }: CustomPublicationInput): PublicationTable | null => {
   if (sources.length === 0) return null
-  const rules = formatRules ?? {
+  const rules = normalizeCustomPublicationFormatRules(formatRules ?? {
     coefficientDigits: 4,
     statisticDigits: 2,
     nDigits: 0,
@@ -240,7 +241,7 @@ export const buildCustomPublicationTable = ({
     starLevels: { one: 0.1, two: 0.05, three: 0.01 },
     missingDisplay: '' as const,
     booleanDisplay: 'yes-no' as const,
-  }
+  })
 
   const columnSources = sources
     .map((source, index) => {
@@ -292,34 +293,6 @@ export const buildCustomPublicationTable = ({
   const hasGroups = columnSources.some((source) => source.group)
   const groupValues = columnSources.map((source) => source.group || '')
   const modelValues = columnSources.map((source) => source.modelLabel || source.modelShortName || source.modelName || '')
-  const statisticRows: PublicationRow[] = []
-
-  const enabledStatisticIdSet = new Set(
-    enabledStatisticIds.length > 0
-      ? enabledStatisticIds
-      : [
-          'controls',
-          ...Array.from(
-            new Set(
-              columnSources.flatMap((source) => [
-                ...source.dimensions.groupFields.map((field) => `fe:${field} FE`),
-                ...source.dimensions.idFields.map((field) => `fe:${field} FE`),
-                ...(source.dimensions.timeField ? [`fe:${source.dimensions.timeField} FE`] : []),
-              ]),
-            ),
-          ),
-          'n',
-          'adj-r2',
-        ],
-  )
-
-  if (enabledStatisticIdSet.has('controls')) {
-    statisticRows.push({
-      role: 'fixedEffect',
-      label: statisticLabels.controls?.trim() || 'Controls',
-      values: columnSources.map((source) => (source.config.features.length > 0 ? (rules.booleanDisplay === 'check' ? '✓' : 'Yes') : rules.booleanDisplay === 'yes-no' ? 'No' : '')),
-    })
-  }
 
   const fixedEffectLabels = Array.from(
     new Set(
@@ -330,9 +303,18 @@ export const buildCustomPublicationTable = ({
       ]),
     ),
   )
+  const defaultStatisticIds = ['controls', ...fixedEffectLabels.map((label) => `fe:${label}`), 'n', 'adj-r2']
+  const requestedStatisticIds = enabledStatisticIds.length > 0 ? enabledStatisticIds : defaultStatisticIds
+  const statisticRowsById = new Map<string, PublicationRow>()
+
+  statisticRowsById.set('controls', {
+    role: 'fixedEffect',
+    label: statisticLabels.controls?.trim() || 'Controls',
+    values: columnSources.map((source) => (source.config.features.length > 0 ? (rules.booleanDisplay === 'check' ? '✓' : 'Yes') : rules.booleanDisplay === 'yes-no' ? 'No' : '')),
+  })
+
   fixedEffectLabels.forEach((label) => {
-    if (!enabledStatisticIdSet.has(`fe:${label}`)) return
-    statisticRows.push({
+    statisticRowsById.set(`fe:${label}`, {
       role: 'fixedEffect',
       label: statisticLabels[`fe:${label}`]?.trim() || label,
       values: columnSources.map((source) => {
@@ -346,21 +328,22 @@ export const buildCustomPublicationTable = ({
     })
   })
 
-  if (enabledStatisticIdSet.has('n')) {
-    statisticRows.push({
-      role: 'metric',
-      label: statisticLabels.n?.trim() || 'N',
-      values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'Number of obs'), 'n', rules.nDigits, rules.missingDisplay)),
-    })
-  }
+  statisticRowsById.set('n', {
+    role: 'metric',
+    label: statisticLabels.n?.trim() || 'N',
+    values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'Number of obs'), 'n', rules.nDigits, rules.missingDisplay)),
+  })
 
-  if (enabledStatisticIdSet.has('adj-r2')) {
-    statisticRows.push({
-      role: 'metric',
-      label: statisticLabels['adj-r2']?.trim() || 'Adj-R²',
-      values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'R-squared'), 'r2', rules.r2Digits, rules.missingDisplay)),
-    })
-  }
+  statisticRowsById.set('adj-r2', {
+    role: 'metric',
+    label: statisticLabels['adj-r2']?.trim() || 'Adj-R²',
+    values: columnSources.map((source) => formatPublicationMetric(metricFor(source, 'R-squared'), 'r2', rules.r2Digits, rules.missingDisplay)),
+  })
+
+  const statisticRows = requestedStatisticIds.flatMap((id) => {
+    const row = statisticRowsById.get(id)
+    return row ? [row] : []
+  })
 
   const defaultColumnLabels = columnSources.map((_, index) => `(${index + 1})`)
   const columnLabels = columnSources.map((source) => source.column.label)

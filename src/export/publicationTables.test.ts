@@ -60,4 +60,36 @@ describe('publication tables', () => {
     expect(table?.rows.find((row) => row.role === 'model')?.values).toEqual(['OLS'])
     expect(table?.rows.find((row) => row.label === 'x')?.values).toEqual(['1.2346***'])
   })
+
+  it('normalizes unsafe custom format rules before formatting the table', () => {
+    const table = buildCustomPublicationTable({
+      title: '自定义论文表',
+      note: '',
+      sources: [
+        {
+          id: 'current',
+          result,
+          config: { target: 'y', features: ['x'] },
+          dimensions: { idFields: [], timeField: '', groupFields: [] },
+          label: '(1)',
+          modelShortName: 'OLS',
+        },
+      ],
+      formatRules: {
+        coefficientDigits: 99,
+        statisticDigits: Number.NaN,
+        nDigits: -5,
+        r2Digits: 9,
+        parenthesisMode: 't',
+        starLevels: { one: 2, two: 0.05, three: 0.01 },
+        missingDisplay: '',
+        booleanDisplay: 'yes-no',
+      },
+    })
+
+    expect(table?.rows.find((row) => row.label === 'x')?.values).toEqual(['1.23456000***'])
+    expect(table?.rows.find((row) => row.label === '')?.values[0]).toBe('(10.29)')
+    expect(table?.rows.find((row) => row.label === 'N')?.values).toEqual(['100'])
+    expect(table?.rows.find((row) => row.label === 'Adj-R²')?.values).toEqual(['0.321000'])
+  })
 })
