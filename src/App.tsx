@@ -35,8 +35,9 @@ import { publicationTableToRows } from './export/publicationTables'
 import { buildCsvReport, buildExcelBlob, buildHtmlReport, buildJsonReport, csvLine } from './export/reportExport'
 import type { ColumnType, Row } from './data/types'
 import type { ParameterField } from './models/modelConfig'
+import { modelCatalog } from './models/catalog'
 import { getModelMaturity, getModelPlugin, getModelTaskGroup, getModelUseCase } from './models/registry'
-import type { InferenceConfig, ModelParamValue, SpatialWeightsParam } from './models/types'
+import type { InferenceConfig, ModelPackId, ModelParamValue, SpatialWeightsParam } from './models/types'
 import {
   buildModelComparisonSources,
   buildModelComparisonTable,
@@ -46,6 +47,14 @@ import { formatDuration } from './workers/runProgress'
 import type { WorkflowStep } from './hooks/useModelRun'
 import { usePublicationWorkbench } from './hooks/usePublicationWorkbench'
 import { useWorkbenchSession } from './hooks/useWorkbenchSession'
+import { useLicense } from './hooks/useLicense'
+import {
+  canExportLicensedReports,
+  canRunLicensedModels,
+  getLicenseStatusLabel,
+} from './security/license'
+import { getEmbeddedPackagingProfile } from './security/productProfile'
+import { recordPerformanceEvent } from './telemetry/performanceEvents'
 import { deriveResultInsights } from './components/results/resultInsights'
 import { ResultReadingPanel } from './components/results'
 import { CustomPublicationExportSummary, CustomPublicationWorkbench } from './components/report'
@@ -75,18 +84,6 @@ type ExportItem = {
   kind: 'summary' | 'table' | 'report' | 'meta'
 }
 
-declare global {
-  interface Window {
-    visualStatsDesktop?: {
-      platform: string
-      versions: {
-        electron: string
-        chrome: string
-      }
-    }
-  }
-}
-
 const asParamString = (value: ModelParamValue | undefined) => {
   if (Array.isArray(value)) return value[0] ?? ''
   if (value && typeof value === 'object') return ''
@@ -107,11 +104,50 @@ function App() {
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('workbench')
   const [dataPreviewScrollTop, setDataPreviewScrollTop] = useState(0)
   const [selectedModelComparisonSourceIds, setSelectedModelComparisonSourceIds] = useState<string[] | null>(null)
+  const [isLicenseDialogOpen, setIsLicenseDialogOpen] = useState(false)
+  const [licenseKey, setLicenseKey] = useState('')
+
+  const license = useLicense()
+  const licenseState = license.state
+  const canRunModels = canRunLicensedModels(licenseState)
+  const canExportReports = canExportLicensedReports(licenseState)
+  const productProfile = useMemo(() => getEmbeddedPackagingProfile(), [])
+  const visibleModelPacks = useMemo<ModelPackId[]>(
+    () => {
+      const packagedPackSet = new Set(productProfile.enabledModelPacks)
+      const licensedPacks: ModelPackId[] = licenseState.enabledModelPacks.length > 0 ? licenseState.enabledModelPacks : ['core']
+      return licensedPacks.filter((pack) => packagedPackSet.has(pack))
+    },
+    [licenseState.enabledModelPacks, productProfile.enabledModelPacks],
+  )
+  const visibleModelIds = useMemo(() => {
+    const packagedPackSet = new Set(productProfile.enabledModelPacks)
+    const packagedIdSet = new Set(productProfile.enabledModelIds)
+    const disabledIdSet = new Set(productProfile.disabledModelIds)
+    const licensedPackSet = new Set(licenseState.enabledModelPacks.length > 0 ? licenseState.enabledModelPacks : ['core'])
+    const licensedIdSet = new Set(licenseState.enabledModelIds ?? [])
+
+    return modelCatalog
+      .filter((entry) => {
+        const packaged = !disabledIdSet.has(entry.id) && (packagedPackSet.has(entry.packId) || packagedIdSet.has(entry.id))
+        const licensed = licensedPackSet.has(entry.packId) || licensedIdSet.has(entry.id)
+        return packaged && licensed
+      })
+      .map((entry) => entry.id)
+  }, [
+    licenseState.enabledModelIds,
+    licenseState.enabledModelPacks,
+    productProfile.disabledModelIds,
+    productProfile.enabledModelIds,
+    productProfile.enabledModelPacks,
+  ])
 
   const session = useWorkbenchSession({
     workspaceTab,
     isExportModalOpen,
     onSwitchModel: () => setWorkspaceTab('workbench'),
+    enabledModelPacks: visibleModelPacks,
+    enabledModelIds: visibleModelIds,
   })
 
   const { data, model, workflow, run, snapshots: snapshotState, actions } = session
@@ -119,6 +155,7 @@ function App() {
     rows,
     fileName,
     uploadError,
+    importStatus,
     dataRoles,
     pendingImport,
     missingValueAlert,
@@ -225,8 +262,8 @@ function App() {
   const setIsVariableSetupOpen = actions.workflow.setIsVariableSetupOpen
   const openVariableSetup = actions.workflow.openVariableSetup
   const saveVariableSetup = actions.workflow.saveVariableSetup
-  const saveVariableSetupAndRun = actions.workflow.saveVariableSetupAndRun
-  const handleRunModel = actions.run.runModel
+  const saveVariableSetupAndRunAction = actions.workflow.saveVariableSetupAndRun
+  const runModelAction = actions.run.runModel
   const cancelRunTask = actions.run.cancelRunTask
   const closeRunFailureDialog = actions.run.closeRunFailureDialog
   const saveSnapshot = actions.snapshots.saveSnapshot
@@ -247,6 +284,30 @@ function App() {
   const deleteSelectedSnapshots = actions.snapshots.deleteSelectedSnapshots
   const deleteSnapshot = actions.snapshots.deleteSnapshot
 
+  const shouldShowLicenseDialog =
+    isLicenseDialogOpen || (!licenseState.isUsable && !licenseState.isDevelopmentFallback && licenseState.status !== 'loading')
+  const isActiveModelAvailable = !activeModelId || visibleModelIds.includes(activeModelId)
+  const canRunCurrentModel = canRunModels && isActiveModelAvailable
+  const runAccessLabel = !canRunModels ? '需要激活' : !isActiveModelAvailable ? '模型未打包' : ''
+
+  const handleRunModel = () => {
+    if (!canRunModels) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
+    if (!isActiveModelAvailable) return
+    runModelAction()
+  }
+
+  const saveVariableSetupAndRun = () => {
+    if (!canRunModels) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
+    if (!isActiveModelAvailable) return
+    saveVariableSetupAndRunAction()
+  }
+
   const virtualPreviewStart = Math.max(0, Math.floor(dataPreviewScrollTop / dataPreviewRowHeight) - dataPreviewOverscanRows)
   const virtualPreviewEnd = Math.min(rows.length, virtualPreviewStart + dataPreviewVisibleRows + dataPreviewOverscanRows * 2)
   const virtualPreviewRows = useMemo(() => rows.slice(virtualPreviewStart, virtualPreviewEnd), [rows, virtualPreviewEnd, virtualPreviewStart])
@@ -254,6 +315,7 @@ function App() {
   const leadInsight = resultInsights[0] ?? ''
   const secondaryInsights = resultInsights.slice(1)
   const visibleSummaryMetrics = result?.summary.slice(0, 4) ?? []
+  const liveStatusMessage = importStatus || runTask?.phase || modelError || uploadError || exportError || licenseState.message || ''
   const hasCancelledRunTask = runTask?.status === 'cancelled' && runState.signature === currentRunSignature
   const shouldShowFocusTask = workspaceMode !== 'result' && (isModelRunning || hasStaleResult || hasCancelledRunTask)
   const roleSummary = [
@@ -357,7 +419,7 @@ function App() {
   const isCustomPublicationDefaultTableMode = publicationState.isDefaultTableMode
   const customPublicationPreviewTable = publicationState.previewTable
   const customPublicationPreviewHtml = publicationState.previewHtml
-  const canExportCustomPublication = publicationState.canExport && !isExporting
+  const canExportCustomPublication = publicationState.canExport && canExportReports && !isExporting
   const customPublicationEnabled = selectedExportItemSet.has('custom-publication')
   const modelComparisonSources = useMemo(
     () =>
@@ -443,6 +505,10 @@ function App() {
   const restoreCustomPublicationDefaults = publicationActions.restoreDefaults
 
   const openPublicationWorkbench = () => {
+    if (!canExportReports) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
     setExportError('')
     setIsExportModalOpen(false)
     setWorkspaceTab('publication')
@@ -498,6 +564,10 @@ function App() {
   }
 
   const exportReport = async (format: ExportFormat = exportFormat, selectedIds = getExportSelection()) => {
+    if (!canExportReports) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
     if (!result || !hasActiveModel) return
     if (selectedIds.length === 0) return
     const context = buildReportExportContext(selectedIds)
@@ -523,6 +593,10 @@ function App() {
   }
 
   const openExportDialog = () => {
+    if (!canExportReports) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
     if (!result) return
     const ids = exportItems.map((item) => item.id)
     setExportError('')
@@ -573,11 +647,14 @@ function App() {
     }
 
     try {
+      const startedAt = performance.now()
       setIsExporting(true)
       setExportError('')
       await exportReport(exportFormat, selectedExportItemIds)
+      recordPerformanceEvent('export.completed', performance.now() - startedAt, { format: exportFormat, itemCount: selectedExportItemIds.length })
       setIsExportModalOpen(false)
     } catch (error) {
+      recordPerformanceEvent('export.failed', undefined, { format: exportFormat })
       setExportError(error instanceof Error ? error.message : '导出失败，请调整导出内容后重试。')
     } finally {
       setIsExporting(false)
@@ -585,6 +662,10 @@ function App() {
   }
 
   const exportCustomPublicationOnly = async (format: ExportFormat = 'excel') => {
+    if (!canExportReports) {
+      setIsLicenseDialogOpen(true)
+      return
+    }
     if (isExporting) return
     const publicationTable = buildCustomPublicationTableFromConfig()
     if (!publicationTable) {
@@ -593,6 +674,7 @@ function App() {
     }
 
     try {
+      const startedAt = performance.now()
       setIsExporting(true)
       setExportError('')
       const filenameBase = (customPublicationConfig.title.trim() || '自定义论文表').replace(/[\\/:*?"<>|]/g, '-')
@@ -620,24 +702,29 @@ function App() {
           { fontFamily: 'Times New Roman', fontSize: 11 },
         ).toBlob()
         downloadBlob([blob], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', `${filenameBase}.xlsx`)
+        recordPerformanceEvent('export.completed', performance.now() - startedAt, { format, kind: 'custom-publication' })
         return
       }
 
       if (format === 'html' || format === 'word') {
         const html = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:"Times New Roman","Noto Serif SC",serif;color:#000;margin:28px;line-height:1.45}${publicationTableCss}</style></head><body>${buildPublicationTableHtml(publicationTable)}</body></html>`
         downloadBlob([format === 'word' ? '\uFEFF' : '', html], format === 'word' ? 'application/msword;charset=utf-8' : 'text/html;charset=utf-8', `${filenameBase}.${format === 'word' ? 'doc' : 'html'}`)
+        recordPerformanceEvent('export.completed', performance.now() - startedAt, { format, kind: 'custom-publication' })
         return
       }
 
       if (format === 'json') {
         downloadBlob([JSON.stringify(publicationTable, null, 2)], 'application/json;charset=utf-8', `${filenameBase}.json`)
+        recordPerformanceEvent('export.completed', performance.now() - startedAt, { format, kind: 'custom-publication' })
         return
       }
 
       const note = String(rowsForExport.at(-1)?.[0] ?? '')
       const csv = [...rowsForExport.slice(0, -1).map((row) => csvLine(row)), '', note].join('\n')
       downloadBlob(['\uFEFF', csv], 'text/csv;charset=utf-8', `${filenameBase}.csv`)
+      recordPerformanceEvent('export.completed', performance.now() - startedAt, { format, kind: 'custom-publication' })
     } catch (error) {
+      recordPerformanceEvent('export.failed', undefined, { format, kind: 'custom-publication' })
       setExportError(error instanceof Error ? error.message : '自定义论文表导出失败。')
     } finally {
       setIsExporting(false)
@@ -1124,9 +1211,9 @@ function App() {
             <button className="primary-button" type="button" onClick={openVariableSetup} disabled={!hasActiveModel || !hasDataset || isModelRunning}>
               设置变量与参数
             </button>
-            <button className="secondary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+            <button className="secondary-button" type="button" onClick={handleRunModel} disabled={!canRunCurrentModel || !hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
               <Play size={14} />
-              {validationErrors.length > 0 ? '需调整后运行' : '运行模型'}
+              {runAccessLabel || (validationErrors.length > 0 ? '需调整后运行' : '运行模型')}
             </button>
           </div>
         </div>
@@ -1260,9 +1347,9 @@ function App() {
           <button className="secondary-button is-subtle" type="button" onClick={saveVariableSetup}>
             保存设定
           </button>
-          <button className="primary-button" type="button" onClick={saveVariableSetupAndRun} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+          <button className="primary-button" type="button" onClick={saveVariableSetupAndRun} disabled={!canRunCurrentModel || !hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
             <Play size={14} />
-            保存并运行
+            {runAccessLabel || '保存并运行'}
           </button>
         </div>
       </section>
@@ -1339,8 +1426,37 @@ function App() {
     />
   )
 
+  const submitLicenseActivation = async () => {
+    if (!licenseKey.trim() || license.isBusy) return
+    const result = await license.actions.activate(licenseKey.trim())
+    if (result.ok) {
+      setLicenseKey('')
+      setIsLicenseDialogOpen(false)
+    }
+  }
+
+  const startLicenseTrial = async () => {
+    const result = await license.actions.startTrial()
+    if (result.ok) setIsLicenseDialogOpen(false)
+  }
+
+  const refreshLicenseStatus = async () => {
+    const result = await license.actions.refresh()
+    if (result.ok && result.status.isUsable) setIsLicenseDialogOpen(false)
+  }
+
+  const deactivateLicense = async () => {
+    await license.actions.deactivate()
+    setIsLicenseDialogOpen(true)
+  }
+
+  const licenseExpiryText = licenseState.expiresAt ? new Date(licenseState.expiresAt).toLocaleDateString() : '未设置'
+
   return (
     <main className="app-shell">
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveStatusMessage}
+      </div>
       <header className="topbar">
         <div className="topbar__left">
           <div className="topbar__brand">
@@ -1365,6 +1481,10 @@ function App() {
           </nav>
         </div>
         <div className="topbar__actions">
+          <button className={`license-badge is-${licenseState.status}`} type="button" onClick={() => setIsLicenseDialogOpen(true)}>
+            <span>{getLicenseStatusLabel(licenseState.status)}</span>
+            <strong>{licenseState.plan ? licenseState.plan.toUpperCase() : 'License'}</strong>
+          </button>
           {workspaceTab === 'publication' ? (
             <>
               <button className="secondary-button is-subtle" type="button" onClick={closePublicationWorkbench}>
@@ -1402,9 +1522,9 @@ function App() {
                 <Table size={15} />
                 数据表
               </button>
-              <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+              <button className="primary-button" type="button" onClick={handleRunModel} disabled={!canRunCurrentModel || !hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
                 <Play size={15} />
-                {isModelRunning ? '运行中' : '运行模型'}
+                {runAccessLabel || (isModelRunning ? '运行中' : '运行模型')}
               </button>
             </>
           )}
@@ -1685,9 +1805,9 @@ function App() {
                           取消
                         </button>
                       ) : null}
-          <button className="primary-button" type="button" onClick={handleRunModel} disabled={!hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
+          <button className="primary-button" type="button" onClick={handleRunModel} disabled={!canRunCurrentModel || !hasActiveModel || !hasDataset || isModelRunning || validationErrors.length > 0}>
                         <Play size={14} />
-                        {validationErrors.length > 0 ? '需调整后运行' : isModelRunning ? '运行中' : hasStaleResult ? '重新运行' : '运行模型'}
+                        {runAccessLabel || (validationErrors.length > 0 ? '需调整后运行' : isModelRunning ? '运行中' : hasStaleResult ? '重新运行' : '运行模型')}
                       </button>
                     </div>
                   </section>
@@ -1877,6 +1997,83 @@ function App() {
       </section>
 
       {isVariableSetupOpen ? renderVariableSetupModal() : null}
+
+      {shouldShowLicenseDialog ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="license-modal" role="dialog" aria-modal="true" aria-label="产品授权">
+            <div className="data-modal__header">
+              <div>
+                <span className="panel__label">License</span>
+                <h2>激活 Visual Stats Lab</h2>
+                <p>授权用于控制使用期限、模型包和论文表导出能力。本机只保存服务器签名证书，不保存私钥。</p>
+              </div>
+              {licenseState.isUsable ? (
+                <button className="ghost-button" type="button" onClick={() => setIsLicenseDialogOpen(false)} title="关闭">
+                  <X size={16} />
+                </button>
+              ) : null}
+            </div>
+
+            <div className="license-status-card">
+              <div>
+                <span>当前状态</span>
+                <strong>{getLicenseStatusLabel(licenseState.status)}</strong>
+                <small>{licenseState.message}</small>
+              </div>
+              <div>
+                <span>方案</span>
+                <strong>{licenseState.plan ? licenseState.plan.toUpperCase() : '未激活'}</strong>
+                <small>到期：{licenseExpiryText}</small>
+              </div>
+              <div>
+                <span>模型包</span>
+                <strong>{visibleModelPacks.join(' / ')}</strong>
+                <small>{canExportReports ? '允许论文表导出' : '导出需激活'}</small>
+              </div>
+            </div>
+
+            <div className="license-form">
+              <label>
+                <span>License Key</span>
+                <input
+                  value={licenseKey}
+                  placeholder="例如 VSL-DEV-PRO-2026"
+                  onChange={(event) => setLicenseKey(event.target.value)}
+                  disabled={license.isBusy}
+                />
+              </label>
+              <button className="primary-button" type="button" onClick={submitLicenseActivation} disabled={!licenseKey.trim() || license.isBusy}>
+                {license.isBusy ? '处理中' : '激活'}
+              </button>
+            </div>
+
+            {license.error ? (
+              <div className="export-error" role="alert">
+                <AlertTriangle size={16} />
+                {license.error}
+              </div>
+            ) : null}
+
+            <div className="license-modal__actions">
+              <button className="secondary-button" type="button" onClick={startLicenseTrial} disabled={license.isBusy || licenseState.status === 'trial'}>
+                开始 14 天试用
+              </button>
+              <button className="secondary-button is-subtle" type="button" onClick={refreshLicenseStatus} disabled={license.isBusy || !licenseState.licenseId}>
+                联网刷新授权
+              </button>
+              {licenseState.licenseId || licenseState.status === 'trial' ? (
+                <button className="secondary-button is-subtle" type="button" onClick={deactivateLicense} disabled={license.isBusy}>
+                  解除本机授权
+                </button>
+              ) : null}
+            </div>
+
+            <p className="license-note">
+              正式销售时请把授权服务部署到自己的服务器，并替换生产私钥。Electron 客户端只能内置公钥，不能包含服务器私钥。
+            </p>
+          </section>
+        </div>
+      ) : null}
 
       {isModelLibraryOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -2139,7 +2336,7 @@ function App() {
                   closeRunFailureDialog()
                   handleRunModel()
                 }}
-                disabled={validationErrors.length > 0 || !hasActiveModel || !hasDataset || isModelRunning}
+                disabled={!canRunCurrentModel || validationErrors.length > 0 || !hasActiveModel || !hasDataset || isModelRunning}
               >
                 <Play size={14} />
                 重新运行

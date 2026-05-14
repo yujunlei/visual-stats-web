@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Papa from 'papaparse'
-import { readSheet } from 'read-excel-file/browser'
 import { emptyDataRoles, inferDataRoles, withoutField, type DataRoles } from '../data/dataRoles'
 import { summarizeMissingValues, type MissingValueAlert } from '../data/missingValues'
 import { diagnosePanelBalance } from '../data/panelBalance'
 import type { DataPrepConfig, RunLogEntry } from '../data/preprocess'
-import { profileRows, rowsFromSheet } from '../data/tableUtils'
+import { profileRows } from '../data/tableUtils'
 import type { ColumnType, Row, TypeOverrides } from '../data/types'
 import { allModelCategory, modelUsageStorageKey } from '../constants/workbench'
 import { createEmptyModelConfig, removeImplicitColumnDefaults, selectedParamValues, type ParameterField } from '../models/modelConfig'
 import { filterAndSortModelPlugins, getRecentModelPlugins, recordModelUsage, type ModelUsageMap } from '../models/modelUsage'
-import { getModelMaturity, getModelPlugin, getModelTaskGroup, modelPlugins, modelTaskGroupOrder } from '../models/registry'
+import { getModelCatalogEntry, getModelMaturity, getModelPlugin, getModelTaskGroup, modelPlugins, modelTaskGroupOrder } from '../models/registry'
 import { parseSpatialWeightsText } from '../models/spatialWeightsParser'
-import type { InferenceConfig, ModelConfig, ModelParamValue, ModelPlugin, SpatialWeightsParam } from '../models/types'
+import type { InferenceConfig, ModelConfig, ModelPackId, ModelParamValue, ModelPlugin, SpatialWeightsParam } from '../models/types'
 import { formatDuration, isSlowModel } from '../workers/runProgress'
 import { createRunSignature, useModelRun, type RunState, type WorkflowStep } from './useModelRun'
 import { useSnapshots, type WorkbenchSnapshot } from './useSnapshots'
+import { dataImportLimits, type DataImportWorkerMessage } from '../workers/dataImportWorkerTypes'
+import { recordPerformanceEvent } from '../telemetry/performanceEvents'
 
 export type PendingImport = {
   fileName: string
@@ -36,6 +36,10 @@ export type ImportPlan =
   | { kind: 'empty'; error: string }
   | { kind: 'missing-values'; alert: MissingValueAlert }
   | { kind: 'ready'; pendingImport: PendingImport }
+
+export const importLimits = {
+  ...dataImportLimits,
+}
 
 type ParameterSectionId = 'fields' | 'estimation' | 'advanced'
 
@@ -113,10 +117,34 @@ export const asSpatialWeightsParam = (value: ModelParamValue | undefined): Spati
 
 export const cleanImportedRows = (rows: Row[]) => rows.filter((row) => Object.values(row).some((value) => value !== null && value !== ''))
 
+export const validateImportFile = (file: Pick<File, 'size'>) => {
+  if (file.size > importLimits.maxFileSizeBytes) {
+    return `文件过大：当前限制为 ${Math.round(importLimits.maxFileSizeBytes / 1024 / 1024)}MB。`
+  }
+  return ''
+}
+
+export const validateImportRows = (rows: Row[]) => {
+  const rowCount = rows.length
+  const columnCount = Object.keys(rows[0] ?? {}).length
+  if (rowCount > importLimits.maxRows) {
+    return `数据行数过多：当前限制为 ${importLimits.maxRows.toLocaleString('zh-CN')} 行。`
+  }
+  if (columnCount > importLimits.maxColumns) {
+    return `字段数过多：当前限制为 ${importLimits.maxColumns.toLocaleString('zh-CN')} 个字段。`
+  }
+  return ''
+}
+
 export const createImportPlan = (rows: Row[], fileName: string): ImportPlan => {
   const cleanedRows = cleanImportedRows(rows)
   if (cleanedRows.length === 0) {
     return { kind: 'empty', error: '文件没有可读取的数据。' }
+  }
+
+  const limitError = validateImportRows(cleanedRows)
+  if (limitError) {
+    return { kind: 'empty', error: limitError }
   }
 
   const missingSummary = summarizeMissingValues(cleanedRows, fileName)
@@ -378,12 +406,16 @@ export type UseWorkbenchSessionOptions = {
   workspaceTab?: WorkspaceTab
   isExportModalOpen?: boolean
   onSwitchModel?: () => void
+  enabledModelPacks?: ModelPackId[]
+  enabledModelIds?: string[]
 }
 
 export function useWorkbenchSession({
   workspaceTab = 'workbench',
   isExportModalOpen = false,
   onSwitchModel,
+  enabledModelPacks,
+  enabledModelIds,
 }: UseWorkbenchSessionOptions = {}) {
   const [rows, setRows] = useState<Row[]>([])
   const [fileName, setFileName] = useState('')
@@ -403,6 +435,7 @@ export function useWorkbenchSession({
   const [modelUsage, setModelUsage] = useState<ModelUsageMap>(loadModelUsage)
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('model')
   const [isVariableSetupOpen, setIsVariableSetupOpen] = useState(false)
+  const [importStatus, setImportStatus] = useState('')
 
   const hasActiveModel = Boolean(activeModelId)
   const activeModel = activeModelId ? getModelPlugin(activeModelId) : noModelPlugin
@@ -411,6 +444,10 @@ export function useWorkbenchSession({
   const hasDataset = rows.length > 0
 
   const profiles = useMemo(() => profileRows(rows, typeOverrides), [rows, typeOverrides])
+  useEffect(() => {
+    if (rows.length === 0) return
+    recordPerformanceEvent('profile.completed', undefined, { rows: rows.length, columns: profiles.length })
+  }, [profiles.length, rows.length])
   const previewColumns = useMemo(() => Object.keys(rows[0] ?? {}), [rows])
   const pendingColumns = useMemo(() => Object.keys(pendingImport?.rows[0] ?? {}), [pendingImport])
   const pendingProfiles = useMemo(() => (pendingImport ? profileRows(pendingImport.rows) : []), [pendingImport])
@@ -620,15 +657,25 @@ export function useWorkbenchSession({
     return [{ level: 'info', message: '参数设置完成后，点击运行模型开始计算。' } satisfies RunLogEntry]
   }, [currentRunSignature, hasDataset, hasStaleResult, isModelRunning, modelError, result, runState.logs, runState.signature, runStatus, runTask])
 
-  const modelOrder = useMemo(() => new Map(modelPlugins.map((plugin, index) => [plugin.id, index])), [])
+  const enabledModelPackSet = useMemo(() => new Set(enabledModelPacks ?? ['core', 'advanced', 'experimental']), [enabledModelPacks])
+  const enabledModelIdSet = useMemo(() => (enabledModelIds ? new Set(enabledModelIds) : null), [enabledModelIds])
+  const availableModelPlugins = useMemo(
+    () =>
+      modelPlugins.filter((plugin) => {
+        if (enabledModelIdSet) return enabledModelIdSet.has(plugin.id)
+        return enabledModelPackSet.has(getModelCatalogEntry(plugin.id)?.packId ?? 'core')
+      }),
+    [enabledModelIdSet, enabledModelPackSet],
+  )
+  const modelOrder = useMemo(() => new Map(availableModelPlugins.map((plugin, index) => [plugin.id, index])), [availableModelPlugins])
   const modelCategories = useMemo(
-    () => [allModelCategory, ...modelTaskGroupOrder.filter((category) => modelPlugins.some((plugin) => getModelTaskGroup(plugin) === category))],
-    [],
+    () => [allModelCategory, ...modelTaskGroupOrder.filter((category) => availableModelPlugins.some((plugin) => getModelTaskGroup(plugin) === category))],
+    [availableModelPlugins],
   )
   const filteredModelPlugins = useMemo(
     () =>
       filterAndSortModelPlugins({
-        plugins: modelPlugins,
+        plugins: availableModelPlugins,
         query: modelSearch,
         selectedCategory: selectedModelCategory,
         allCategory: allModelCategory,
@@ -637,11 +684,11 @@ export function useWorkbenchSession({
         modelOrder,
         getTaskGroup: getModelTaskGroup,
       }),
-    [activeModelId, modelOrder, modelSearch, modelUsage, selectedModelCategory],
+    [activeModelId, availableModelPlugins, modelOrder, modelSearch, modelUsage, selectedModelCategory],
   )
   const recentModelPlugins = useMemo(
-    () => getRecentModelPlugins(modelPlugins, modelUsage, activeModelId),
-    [activeModelId, modelUsage],
+    () => getRecentModelPlugins(availableModelPlugins, modelUsage, activeModelId),
+    [activeModelId, availableModelPlugins, modelUsage],
   )
   const parameterSections = useMemo(() => {
     const schema = activeModel.parameterSchema ?? []
@@ -872,27 +919,50 @@ export function useWorkbenchSession({
         return
       }
 
-      const extension = file.name.split('.').pop()?.toLowerCase()
-
-      if (extension === 'xlsx') {
-        try {
-          const sheetRows = await readSheet(file)
-          openImportWizard(rowsFromSheet(sheetRows), file.name)
-        } catch {
-          setUploadError('XLSX 解析失败，请确认第一张工作表是标准二维表。')
-        }
+      const fileLimitError = validateImportFile(file)
+      if (fileLimitError) {
+        setUploadError(fileLimitError)
         return
       }
 
-      Papa.parse<Row>(file, {
-        header: true,
-        skipEmptyLines: true,
-        dynamicTyping: true,
-        complete: ({ data }) => {
-          openImportWizard(data.filter((row) => Object.keys(row).length > 0), file.name)
-        },
-        error: () => setUploadError('CSV 解析失败，请检查文件格式。'),
-      })
+      const extension = file.name.split('.').pop()?.toLowerCase()
+      if (extension !== 'csv' && extension !== 'xlsx') {
+        setUploadError('仅支持 CSV 或 XLSX 文件。')
+        return
+      }
+
+      const taskId = `${Date.now()}-${file.name}`
+      const startedAt = performance.now()
+      const worker = new Worker(new URL('../workers/dataImportWorker.ts', import.meta.url), { type: 'module' })
+      setUploadError('')
+      setImportStatus('正在解析数据文件。')
+      recordPerformanceEvent('import.started', undefined, { fileName: file.name, fileSize: file.size })
+      worker.onmessage = (event: MessageEvent<DataImportWorkerMessage>) => {
+        const message = event.data
+        if (message.taskId !== taskId) return
+        if (message.type === 'progress') {
+          setImportStatus(message.phase)
+          return
+        }
+        if (message.type === 'success') {
+          setImportStatus('')
+          recordPerformanceEvent('import.completed', performance.now() - startedAt, { fileName: file.name, rows: message.rows.length })
+          openImportWizard(message.rows, file.name)
+          worker.terminate()
+          return
+        }
+        setImportStatus('')
+        recordPerformanceEvent('import.failed', performance.now() - startedAt, { fileName: file.name })
+        setUploadError(message.error)
+        worker.terminate()
+      }
+      worker.onerror = () => {
+        setImportStatus('')
+        recordPerformanceEvent('import.failed', performance.now() - startedAt, { fileName: file.name })
+        setUploadError(extension === 'xlsx' ? 'XLSX 解析失败，请确认第一张工作表是标准二维表。' : 'CSV 解析失败，请检查文件格式。')
+        worker.terminate()
+      }
+      worker.postMessage({ taskId, file })
     },
     [hasActiveModel, openImportWizard],
   )
@@ -1037,6 +1107,7 @@ export function useWorkbenchSession({
       rows,
       fileName,
       uploadError,
+      importStatus,
       typeOverrides,
       prepConfig,
       dataRoles,
@@ -1079,6 +1150,7 @@ export function useWorkbenchSession({
       modelUsage,
       modelMaturity,
       modelOrder,
+      availableModelPlugins,
       modelCategories,
       filteredModelPlugins,
       recentModelPlugins,

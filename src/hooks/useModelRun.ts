@@ -4,6 +4,7 @@ import type { Row } from '../data/types'
 import type { ModelProfile, RunModelMessage, RunModelRequest } from '../workers/modelRunnerTypes'
 import { estimateRunDuration, isSlowModel, type RunTask, type RunTaskStatus } from '../workers/runProgress'
 import type { InferenceConfig, ModelConfig, ModelPlugin, ModelResult } from '../models/types'
+import { recordPerformanceEvent } from '../telemetry/performanceEvents'
 
 export type WorkflowStep = 'model' | 'upload' | 'roles' | 'variables' | 'run' | 'results'
 
@@ -193,9 +194,9 @@ export function useModelRun({
 
     setUploadError('')
     setRunFailureDialog(null)
-    runWorkerRef.current?.terminate()
     runCancelRef.current = false
     const taskId = `${Date.now()}-${activeModel.id}`
+    const startedAt = Date.now()
     const estimatedMs = estimateRunDuration(activeModel.id, rows.length)
     setIsModelRunning(true)
     setWorkflowStep('run')
@@ -206,7 +207,7 @@ export function useModelRun({
       status: 'preparing',
       phase: '创建运行任务。',
       progress: 6,
-      startedAt: Date.now(),
+      startedAt,
       elapsedMs: 0,
       estimatedMs,
     })
@@ -232,9 +233,9 @@ export function useModelRun({
       )
       setIsModelRunning(false)
       setRunStatus('')
-      runWorkerRef.current = null
       setRunFailureDialog(null)
       setWorkflowStep('results')
+      recordPerformanceEvent('modelRun.completed', Date.now() - startedAt, { modelId: activeModel.id, rows: rows.length })
     }
 
     const failRun = (message: string) => {
@@ -258,17 +259,17 @@ export function useModelRun({
       )
       setIsModelRunning(false)
       setRunStatus('')
-      runWorkerRef.current = null
       setRunFailureDialog({
         message,
         modelName: activeModel.name,
         formula: activeModel.getFormula(sanitizedConfig),
       })
       setWorkflowStep('variables')
+      recordPerformanceEvent('modelRun.failed', Date.now() - startedAt, { modelId: activeModel.id, rows: rows.length })
     }
 
     const startBrowserWorker = (prefixLogs: RunLogEntry[] = []) => {
-      const worker = new Worker(new URL('../workers/modelRunner.ts', import.meta.url), { type: 'module' })
+      const worker = runWorkerRef.current ?? new Worker(new URL('../workers/modelRunner.ts', import.meta.url), { type: 'module' })
       runWorkerRef.current = worker
       worker.onmessage = (event: MessageEvent<RunModelMessage>) => {
         const message = event.data
@@ -285,17 +286,16 @@ export function useModelRun({
 
         if (message.type === 'success') {
           completeRun(message.result, [...prefixLogs, ...message.logs])
-          worker.terminate()
           return
         }
 
         failRun(message.error)
-        worker.terminate()
       }
 
       worker.onerror = () => {
         failRun('模型运行进程异常退出。')
         worker.terminate()
+        runWorkerRef.current = null
       }
 
       worker.postMessage({

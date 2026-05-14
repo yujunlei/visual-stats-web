@@ -1,0 +1,283 @@
+:root {
+  color: #20232b;
+  background: #eef3f1;
+  font-family:
+    Inter, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #d9dfda;
+  border-radius: 8px;
+  background: #fff;
+  color: #20232b;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  color: #a2a9b4;
+  cursor: not-allowed;
+}
+
+button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #fff;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #d7ded8;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  color: #20232b;
+}
+
+textarea {
+  resize: vertical;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.studio-shell {
+  min-height: 100vh;
+}
+
+.studio-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 28px;
+  border-bottom: 1px solid #dfe5df;
+  background: rgba(250, 252, 250, 0.96);
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #6f7887;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 28px;
+}
+
+.studio-header p:last-child,
+.panel-title p,
+.muted {
+  color: #6f7887;
+}
+
+.header-actions,
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.studio-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 18px;
+  padding: 18px;
+}
+
+.steps-panel {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.run-panel {
+  min-width: 0;
+}
+
+.panel {
+  border: 1px solid #dce3dd;
+  border-radius: 14px;
+  background: #fbfcfb;
+  padding: 18px;
+}
+
+.sticky-panel {
+  position: sticky;
+  top: 96px;
+  display: grid;
+  grid-template-rows: auto auto minmax(360px, 1fr);
+  gap: 14px;
+  max-height: calc(100vh - 116px);
+}
+
+.panel-title {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.panel-title > span {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e5f2f0;
+  color: #0f766e;
+  font-weight: 800;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+  color: #6f7887;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.full-field {
+  margin-top: 12px;
+}
+
+.pack-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pack-option,
+.model-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid #dce3dd;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  color: #20232b;
+}
+
+.pack-option span,
+.model-option small,
+.model-option em {
+  display: block;
+  color: #6f7887;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.model-list {
+  display: grid;
+  gap: 16px;
+}
+
+.model-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.model-group h3 {
+  grid-column: 1 / -1;
+  color: #20232b;
+  font-size: 16px;
+}
+
+.model-option.is-selected {
+  border-color: #9ed1cc;
+  background: #f0faf8;
+}
+
+.model-option.is-packaged {
+  background: #f8fbfa;
+}
+
+.model-option.is-disabled-override {
+  border-color: #e6d8d0;
+  background: #fff8f4;
+}
+
+.summary-box {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce3dd;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+}
+
+.summary-box strong {
+  font-size: 22px;
+}
+
+.summary-box span {
+  color: #6f7887;
+}
+
+.log-output {
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: #101418;
+  color: #d7f8e8;
+  padding: 14px;
+  white-space: pre-wrap;
+  font: 12px/1.55 "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (max-width: 1120px) {
+  .studio-grid,
+  .pack-list,
+  .model-group,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sticky-panel {
+    position: static;
+    max-height: none;
+  }
+}

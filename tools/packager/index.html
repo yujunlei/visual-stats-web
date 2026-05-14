@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Visual Stats Packager Studio</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="studio-shell">
+      <header class="studio-header">
+        <div>
+          <p class="eyebrow">VISUAL STATS INTERNAL</p>
+          <h1>Packager Studio</h1>
+          <p>生成产品 profile、授权密钥，并执行固定 Windows NSIS 打包流水线。</p>
+        </div>
+        <div class="header-actions">
+          <button id="saveProfileButton" type="button">保存 Product Profile</button>
+          <button id="runPackageButton" class="primary" type="button">运行打包流水线</button>
+        </div>
+      </header>
+
+      <section class="studio-grid">
+        <div class="steps-panel">
+          <section class="panel">
+            <div class="panel-title">
+              <span>1</span>
+              <div>
+                <h2>产品信息</h2>
+                <p>这些信息会写入 build/product-profile.json，并在正式客户端读取。</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>产品名<input id="productName" /></label>
+              <label>App ID<input id="appId" /></label>
+              <label>版本<input id="version" /></label>
+              <label>授权服务器<input id="licenseServerUrl" /></label>
+              <label>目标平台<select id="targetPlatform"><option value="win">Windows NSIS</option></select></label>
+            </div>
+            <label class="full-field">授权公钥<textarea id="publicKeyPem" rows="6" placeholder="生成密钥对后会自动填入公钥；也可以粘贴服务器公钥。"></textarea></label>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <span>2</span>
+              <div>
+                <h2>模型选择</h2>
+                <p>先选模型包，再用单模型做增补。第一版按产品能力隐藏模型，不做源码级裁剪。</p>
+              </div>
+            </div>
+            <div id="packList" class="pack-list"></div>
+            <div id="modelList" class="model-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <span>3</span>
+              <div>
+                <h2>授权密钥</h2>
+                <p>私钥只保存到你选择的本地目录，不写入仓库、不进入安装包。</p>
+              </div>
+            </div>
+            <div class="button-row">
+              <button id="selectKeyDirectoryButton" type="button">选择密钥/授权导出目录</button>
+              <button id="generateKeypairButton" type="button">生成 RSA 密钥对</button>
+            </div>
+            <p id="keyDirectoryText" class="muted">尚未选择目录。</p>
+            <div class="form-grid">
+              <label>Plan<input id="licensePlan" value="professional" /></label>
+              <label>数量<input id="licenseCount" type="number" min="1" max="500" value="1" /></label>
+              <label>有效天数<input id="durationDays" type="number" min="1" value="365" /></label>
+              <label>离线宽限<input id="offlineGraceDays" type="number" min="1" value="30" /></label>
+              <label>最大激活数<input id="maxActivations" type="number" min="1" value="1" /></label>
+            </div>
+            <label class="full-field">备注<input id="licenseNote" placeholder="例如：2026 专业版客户 A" /></label>
+            <button id="generateLicenseButton" type="button">生成 license-keys.json / csv</button>
+          </section>
+        </div>
+
+        <aside class="run-panel">
+          <section class="panel sticky-panel">
+            <div class="panel-title">
+              <span>4</span>
+              <div>
+                <h2>打包执行与日志</h2>
+                <p>固定执行 test、typecheck、lint、build 和 electron-builder --win nsis。</p>
+              </div>
+            </div>
+            <div class="summary-box">
+              <strong id="summaryModels">0 个模型</strong>
+              <span id="summaryPacks">未选择模型包</span>
+            </div>
+            <pre id="logOutput" class="log-output">等待操作...</pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

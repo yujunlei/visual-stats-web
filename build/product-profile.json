@@ -1,0 +1,12 @@
+{
+  "productName": "Visual Stats Lab",
+  "appId": "com.visualstats.lab",
+  "version": "0.1.0",
+  "licenseServerUrl": "https://license.visualstatslab.com",
+  "publicKeyPem": "",
+  "enabledModelPacks": ["core", "advanced", "experimental"],
+  "enabledModelIds": [],
+  "disabledModelIds": [],
+  "targetPlatform": "win",
+  "createdAt": ""
+}

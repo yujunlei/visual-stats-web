@@ -5,7 +5,10 @@ type CsvValue = string | number | null | undefined
 export const csvCell = (value: CsvValue) => {
   if (value === null || value === undefined) return ''
 
-  const text = String(value)
+  let text = String(value)
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`
+  }
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 

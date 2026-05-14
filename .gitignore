@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+coverage/
 *.local
 
 # Editor directories and files
@@ -35,3 +36,9 @@ backend/__pycache__/
 
 # Build outputs
 release/
+
+# Internal packaging / licensing outputs
+visual-stats-private-key-*.pem
+visual-stats-public-key-*.pem
+license-keys-*.json
+license-keys-*.csv

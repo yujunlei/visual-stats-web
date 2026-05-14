@@ -67,6 +67,12 @@ describe('report export builders', () => {
     expect(csvLine(['A,B', 'C"D', null])).toBe('"A,B","C""D",')
   })
 
+  it('guards CSV exports against spreadsheet formula injection', () => {
+    expect(csvLine(['=cmd()', '+SUM(A1:A2)', '-10', '@payload', '\t=hidden', '\r=hidden'])).toBe(
+      "'=cmd(),'+SUM(A1:A2),'-10,'@payload,'\t=hidden,\"'\r=hidden\"",
+    )
+  })
+
   it('selects coefficient tables before secondary tables', () => {
     expect(getSelectedResultTables(result, ['table:diagnostics', 'table:coefficients']).map((table) => table.id)).toEqual([
       'coefficients',

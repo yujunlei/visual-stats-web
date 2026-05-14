@@ -19,45 +19,45 @@ const isDateLike = (value: Row[string]) => {
   return Number.isFinite(Date.parse(value))
 }
 
-const inferType = (values: Row[string][], numericValues: number[], missing: number): ColumnType => {
-  if (values.length === missing) return 'empty'
-
-  const nonMissing = values.filter((value) => value !== null && value !== '')
-  if (numericValues.length >= values.length - missing) return 'numeric'
-  if (nonMissing.length > 0 && nonMissing.filter(isDateLike).length >= nonMissing.length * 0.8) return 'date'
-  return 'category'
-}
-
 export const profileRows = (rows: Row[], overrides: TypeOverrides = {}): VariableProfile[] => {
   const columns = Object.keys(rows[0] ?? {})
 
   return columns.map((name) => {
-    const values: Row[string][] = []
-    const numericValues: number[] = []
     const uniqueValues = new Set<Row[string]>()
     let missing = 0
+    let nonMissing = 0
+    let numericCount = 0
+    let dateLikeCount = 0
     let min: number | undefined
     let max: number | undefined
 
-    rows.forEach((row) => {
+    for (const row of rows) {
       const value = row[name]
-      values.push(value)
 
       if (value === null || value === '') {
         missing += 1
       } else {
+        nonMissing += 1
         uniqueValues.add(value)
+        if (isDateLike(value)) dateLikeCount += 1
       }
 
       const numericValue = toNumber(value)
       if (numericValue !== null) {
-        numericValues.push(numericValue)
+        numericCount += 1
         min = min === undefined ? numericValue : Math.min(min, numericValue)
         max = max === undefined ? numericValue : Math.max(max, numericValue)
       }
-    })
+    }
 
-    const inferredType = inferType(values, numericValues, missing)
+    const inferredType: ColumnType =
+      rows.length === missing
+        ? 'empty'
+        : numericCount >= rows.length - missing
+          ? 'numeric'
+          : nonMissing > 0 && dateLikeCount >= nonMissing * 0.8
+            ? 'date'
+            : 'category'
     const type = overrides[name] ?? inferredType
 
     return {

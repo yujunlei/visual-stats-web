@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { registerLicenseIpcHandlers } = require('./license.cjs')
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 
@@ -181,6 +182,7 @@ function startApplication(electron = getElectron()) {
   app.whenReady().then(() => {
     writeLog(`app-ready platform=${process.platform} arch=${process.arch} version=${app.getVersion()}`)
     app.setName('Visual Stats Lab')
+    registerLicenseIpcHandlers(electron)
     createMenu(electron)
     createWindow(electron)
 

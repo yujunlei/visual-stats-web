@@ -11,12 +11,17 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -b --pretty false",
+    "audit": "npm audit --audit-level=critical",
     "preview": "vite preview",
     "desktop:dev": "concurrently -k \"npm run dev -- --host 127.0.0.1 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "desktop:preview": "npm run build && electron .",
     "desktop:pack": "npm run build && electron-builder --dir",
-    "desktop:dist": "npm run build && electron-builder"
+    "desktop:dist": "npm run build && electron-builder",
+    "packager:studio": "electron tools/packager/main.cjs",
+    "license:keypair": "node scripts/license-keypair.cjs",
+    "license:server": "node scripts/license-server.cjs"
   },
   "build": {
     "appId": "com.visualstats.lab",
@@ -28,6 +33,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/product-profile.json",
       "package.json"
     ],
     "mac": {
@@ -84,6 +90,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.5",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^41.5.0",

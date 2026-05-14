@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DataPrepConfig, RunLogEntry } from '../data/preprocess'
 import type { Row, TypeOverrides } from '../data/types'
 import type { DataRoles } from '../data/dataRoles'
@@ -14,6 +14,7 @@ import {
 } from '../data/snapshots'
 import type { InferenceConfig, ModelConfig, ModelPlugin, ModelResult } from '../models/types'
 import { snapshotStorageKey } from '../constants/workbench'
+import { clearLegacySnapshotStorage, loadSnapshotsFromIndexedDb, persistSnapshotsToIndexedDb } from '../data/snapshotStore'
 
 export type { WorkbenchSnapshot } from '../data/snapshots'
 
@@ -89,6 +90,29 @@ export function useSnapshots({
   const [snapshotNameDraft, setSnapshotNameDraft] = useState('')
   const [selectedSnapshotIds, setSelectedSnapshotIds] = useState<string[]>([])
   const [isSnapshotManageMode, setIsSnapshotManageMode] = useState(false)
+  const initialLegacySnapshotsRef = useRef(snapshots)
+
+  useEffect(() => {
+    let isMounted = true
+    loadSnapshotsFromIndexedDb()
+      .then((storedSnapshots) => {
+        if (!isMounted) return
+        if (storedSnapshots.length > 0) {
+          setSnapshots(storedSnapshots)
+          return
+        }
+        const initialLegacySnapshots = initialLegacySnapshotsRef.current
+        if (initialLegacySnapshots.length > 0) {
+          persistSnapshotsToIndexedDb(initialLegacySnapshots).then(clearLegacySnapshotStorage).catch(() => undefined)
+        }
+      })
+      .catch(() => {
+        // Legacy localStorage state remains available if IndexedDB cannot be read.
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const selectedSnapshotIdSet = useMemo(() => new Set(selectedSnapshotIds), [selectedSnapshotIds])
   const sortedSnapshots = useMemo(() => sortSnapshots(snapshots), [snapshots])
@@ -102,11 +126,11 @@ export function useSnapshots({
 
   const persistSnapshots = (nextSnapshots: WorkbenchSnapshot[]) => {
     setSnapshots(nextSnapshots)
-    try {
-      window.localStorage.setItem(snapshotStorageKey, JSON.stringify(nextSnapshots))
-    } catch {
-      onPersistError('快照保存失败：浏览器本地存储空间不足。')
-    }
+    persistSnapshotsToIndexedDb(nextSnapshots)
+      .then(clearLegacySnapshotStorage)
+      .catch(() => {
+        onPersistError('快照保存失败：浏览器 IndexedDB 存储不可用或空间不足。')
+      })
   }
 
   const saveSnapshot = (input: SnapshotDraftInput) => {

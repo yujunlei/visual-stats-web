@@ -6,10 +6,12 @@ import {
   createImportPlan,
   createModelSwitchReset,
   defaultInferenceConfig,
+  importLimits,
   noModelPlugin,
   resolveEffectiveWorkflowStep,
   setRoleTimeField,
   toggleRoleField,
+  validateImportFile,
 } from './useWorkbenchSession'
 
 const createPlugin = (patch: Partial<ModelPlugin> = {}): ModelPlugin => ({
@@ -71,6 +73,13 @@ describe('useWorkbenchSession helpers', () => {
     const plan = createImportPlan([{ a: '', b: null }], 'empty.csv')
 
     expect(plan).toEqual({ kind: 'empty', error: '文件没有可读取的数据。' })
+  })
+
+  it('rejects oversized import files and oversized parsed tables before opening the wizard', () => {
+    expect(validateImportFile({ size: importLimits.maxFileSizeBytes + 1 })).toContain('文件过大')
+
+    const tooWide = [Object.fromEntries(Array.from({ length: importLimits.maxColumns + 1 }, (_, index) => [`c${index}`, index]))]
+    expect(createImportPlan(tooWide, 'wide.csv')).toEqual({ kind: 'empty', error: `字段数过多：当前限制为 ${importLimits.maxColumns.toLocaleString('zh-CN')} 个字段。` })
   })
 
   it('keeps id, time, and group roles mutually exclusive', () => {

@@ -27,7 +27,10 @@ export type ReportExportContext = {
 
 export const csvCell = (value: string | number | null | undefined) => {
   if (value === null || value === undefined) return ''
-  const text = String(value)
+  let text = String(value)
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`
+  }
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 

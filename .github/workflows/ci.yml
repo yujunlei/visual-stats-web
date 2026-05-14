@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependency tree
+        run: npm run audit
+
       - name: Lint
         run: npm run lint
 
@@ -35,6 +38,9 @@ jobs:
 
       - name: Test
         run: npm run test
+
+      - name: Coverage
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
