@@ -1,12 +1,19 @@
 import { snapshotStorageKey } from '../constants/workbench'
-import { normalizeWorkbenchSnapshot, type WorkbenchSnapshot } from './snapshots'
+import { normalizeWorkbenchSnapshot, type SnapshotStorageSummary, type WorkbenchSnapshot } from './snapshots'
 
 export type SnapshotMeta = Omit<WorkbenchSnapshot, 'rows' | 'dataRoles' | 'typeOverrides' | 'prepConfig' | 'inferenceConfig' | 'modelConfig' | 'result' | 'resultLogs'>
 
 export type SnapshotPayload = Pick<
   WorkbenchSnapshot,
-  'id' | 'rows' | 'dataRoles' | 'typeOverrides' | 'prepConfig' | 'inferenceConfig' | 'modelConfig' | 'result' | 'resultLogs'
->
+  'id' | 'hasRows' | 'dataRoles' | 'typeOverrides' | 'prepConfig' | 'inferenceConfig' | 'modelConfig' | 'result' | 'resultLogs'
+> & {
+  rows?: WorkbenchSnapshot['rows']
+}
+
+export const defaultSnapshotStorageLimits = {
+  maxSnapshots: 30,
+  maxEstimatedBytes: 30 * 1024 * 1024,
+}
 
 const dbName = 'visual-stats-lab:snapshots'
 const dbVersion = 1
@@ -28,7 +35,8 @@ export const toSnapshotMeta = (snapshot: WorkbenchSnapshot): SnapshotMeta => {
 
 export const toSnapshotPayload = (snapshot: WorkbenchSnapshot): SnapshotPayload => ({
   id: snapshot.id,
-  rows: snapshot.rows,
+  hasRows: snapshot.hasRows,
+  ...(snapshot.hasRows ? { rows: snapshot.rows } : {}),
   dataRoles: snapshot.dataRoles,
   typeOverrides: snapshot.typeOverrides,
   prepConfig: snapshot.prepConfig,
@@ -44,6 +52,60 @@ export const mergeSnapshotRecord = (meta: SnapshotMeta, payload?: Partial<Snapsh
     ...payload,
     id: meta.id,
   })
+
+const estimateJsonBytes = (value: unknown) => {
+  try {
+    return new Blob([JSON.stringify(value)]).size
+  } catch {
+    return 0
+  }
+}
+
+export function estimateSnapshotBytes(snapshot: WorkbenchSnapshot) {
+  return estimateJsonBytes(toSnapshotMeta(snapshot)) + estimateJsonBytes(toSnapshotPayload(snapshot))
+}
+
+export function summarizeSnapshotStorage(
+  snapshots: WorkbenchSnapshot[],
+  limits = defaultSnapshotStorageLimits,
+): SnapshotStorageSummary {
+  return {
+    snapshotCount: snapshots.length,
+    estimatedBytes: snapshots.reduce((total, snapshot) => total + estimateSnapshotBytes(snapshot), 0),
+    maxSnapshots: limits.maxSnapshots,
+    maxEstimatedBytes: limits.maxEstimatedBytes,
+  }
+}
+
+export function enforceSnapshotCapacity(
+  snapshots: WorkbenchSnapshot[],
+  limits = defaultSnapshotStorageLimits,
+) {
+  let nextSnapshots = [...snapshots]
+  const canKeep = () => {
+    const summary = summarizeSnapshotStorage(nextSnapshots, limits)
+    return summary.snapshotCount <= limits.maxSnapshots && summary.estimatedBytes <= limits.maxEstimatedBytes
+  }
+
+  while (nextSnapshots.length > 0 && !canKeep()) {
+    const removalCandidate = [...nextSnapshots]
+      .map((snapshot, index) => ({ snapshot, index }))
+      .sort((left, right) => {
+        const leftPriority = Number(Boolean(left.snapshot.pinned)) * 4 + Number(Boolean(left.snapshot.favorite)) * 2
+        const rightPriority = Number(Boolean(right.snapshot.pinned)) * 4 + Number(Boolean(right.snapshot.favorite)) * 2
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority
+
+        const leftTime = new Date(left.snapshot.updatedAt ?? left.snapshot.createdAt).getTime()
+        const rightTime = new Date(right.snapshot.updatedAt ?? right.snapshot.createdAt).getTime()
+        return leftTime - rightTime
+      })[0]
+
+    if (!removalCandidate) break
+    nextSnapshots = nextSnapshots.filter((_, index) => index !== removalCandidate.index)
+  }
+
+  return nextSnapshots
+}
 
 const getIndexedDb = () => (typeof indexedDB === 'undefined' ? null : indexedDB)
 

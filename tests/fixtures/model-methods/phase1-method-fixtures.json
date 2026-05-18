@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "description": "Standard JSON fixtures for Phase 1 survey research and regression diagnostics plugins.",
+  "fixtures": [
+    {
+      "id": "reliability-likert-scale",
+      "pluginId": "reliability-analysis",
+      "description": "Likert scale items with high internal consistency.",
+      "rows": [
+        { "q1": 1, "q2": 1, "q3": 2 },
+        { "q1": 2, "q2": 2, "q3": 2 },
+        { "q1": 3, "q2": 3, "q3": 4 },
+        { "q1": 4, "q2": 4, "q3": 5 },
+        { "q1": 5, "q2": 5, "q3": 5 }
+      ],
+      "config": { "target": "", "features": ["q1", "q2", "q3"], "params": { "items": ["q1", "q2", "q3"] } },
+      "expected": {
+        "summary": {
+          "items": { "equals": 3 },
+          "valid cases": { "equals": 5 },
+          "Cronbach alpha": { "greaterThan": 0.9 }
+        },
+        "tables": {
+          "reliability": {
+            "rowCount": 3,
+            "rows": [{ "match": { "item": "q1" }, "values": { "citc": { "greaterThan": 0 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "item-analysis-likert-scale",
+      "pluginId": "item-analysis",
+      "description": "Ordered Likert items for high-low item discrimination.",
+      "rows": [
+        { "q1": 1, "q2": 1, "q3": 2 },
+        { "q1": 2, "q2": 3, "q3": 4 },
+        { "q1": 3, "q2": 3, "q3": 6 },
+        { "q1": 4, "q2": 5, "q3": 8 },
+        { "q1": 5, "q2": 5, "q3": 10 },
+        { "q1": 6, "q2": 7, "q3": 12 },
+        { "q1": 7, "q2": 7, "q3": 14 },
+        { "q1": 8, "q2": 9, "q3": 16 },
+        { "q1": 9, "q2": 9, "q3": 18 },
+        { "q1": 10, "q2": 11, "q3": 20 },
+        { "q1": 11, "q2": 11, "q3": 22 },
+        { "q1": 12, "q2": 13, "q3": 24 }
+      ],
+      "config": { "target": "", "features": ["q1", "q2", "q3"], "params": { "items": ["q1", "q2", "q3"] } },
+      "expected": {
+        "summary": {
+          "items": { "equals": 3 },
+          "group size": { "equals": 3 }
+        },
+        "tables": {
+          "items": {
+            "rowCount": 3,
+            "rows": [{ "match": { "item": "q1" }, "values": { "difference": { "greaterThan": 0 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "multiple-response-binary-options",
+      "pluginId": "multiple-response-analysis",
+      "description": "0/1 multiple response options with one non-response case.",
+      "rows": [
+        { "a": 1, "b": 0, "c": 1 },
+        { "a": 1, "b": 1, "c": 0 },
+        { "a": 0, "b": 1, "c": 0 },
+        { "a": 0, "b": 0, "c": 0 }
+      ],
+      "config": { "target": "", "features": ["a", "b", "c"], "params": { "options": ["a", "b", "c"] } },
+      "expected": {
+        "summary": {
+          "valid cases": { "equals": 3 },
+          "responses": { "equals": 5 }
+        },
+        "tables": {
+          "multiple-response": {
+            "rowCount": 3,
+            "rows": [
+              { "match": { "option": "a" }, "values": { "selected": { "equals": 2 }, "responsePercent": { "closeTo": 0.4 }, "casePercent": { "closeTo": 0.6666666666666666 } } },
+              { "match": { "option": "c" }, "values": { "selected": { "equals": 1 }, "responsePercent": { "closeTo": 0.2 }, "casePercent": { "closeTo": 0.3333333333333333 } } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "nps-basic-score",
+      "pluginId": "nps-analysis",
+      "description": "NPS scores with balanced promoters and detractors.",
+      "rows": [{ "score": 10 }, { "score": 9 }, { "score": 8 }, { "score": 6 }, { "score": 5 }],
+      "config": { "target": "", "features": ["score"], "params": { "score": "score" } },
+      "expected": {
+        "summary": {
+          "NPS": { "equals": 0 },
+          "promoters": { "equals": 2 },
+          "detractors": { "equals": 2 }
+        },
+        "tables": {
+          "nps": {
+            "rowCount": 3,
+            "rows": [{ "match": { "group": "推荐者(9-10)" }, "values": { "count": { "equals": 2 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "content-validity-expert-ratings",
+      "pluginId": "content-validity",
+      "description": "Expert ratings for I-CVI and S-CVI checks.",
+      "rows": [
+        { "item1": 4, "item2": 3 },
+        { "item1": 4, "item2": 2 },
+        { "item1": 3, "item2": 3 }
+      ],
+      "config": { "target": "", "features": ["item1", "item2"], "params": { "items": ["item1", "item2"], "threshold": 3 } },
+      "expected": {
+        "summary": {
+          "S-CVI/Ave": { "closeTo": 0.8333333333333334 },
+          "S-CVI/UA": { "closeTo": 0.5 }
+        },
+        "tables": {
+          "content-validity": {
+            "rowCount": 2,
+            "rows": [{ "match": { "item": "item1" }, "values": { "iCvi": { "equals": 1 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "vif-regression-diagnostics",
+      "pluginId": "vif-analysis",
+      "description": "Regression predictors with one exact linear combination to lock finite VIF handling.",
+      "rows": [
+        { "y": 3.5, "x": 1, "z": 1, "w": 1.2, "group": "A" },
+        { "y": 6, "x": 2, "z": 2, "w": 2.4, "group": "A" },
+        { "y": 8.5, "x": 3, "z": 3, "w": 3.6, "group": "A" },
+        { "y": 11, "x": 4, "z": 4, "w": 4.8, "group": "A" },
+        { "y": 13.5, "x": 5, "z": 5, "w": 6, "group": "A" },
+        { "y": 13.5, "x": 6, "z": 1, "w": 2.2, "group": "A" },
+        { "y": 16, "x": 7, "z": 2, "w": 3.4, "group": "A" },
+        { "y": 18.5, "x": 8, "z": 3, "w": 4.6, "group": "A" },
+        { "y": 21, "x": 9, "z": 4, "w": 5.8, "group": "A" },
+        { "y": 23.5, "x": 10, "z": 5, "w": 7, "group": "A" },
+        { "y": 23.5, "x": 11, "z": 1, "w": 3.2, "group": "A" },
+        { "y": 26, "x": 12, "z": 2, "w": 4.4, "group": "A" },
+        { "y": 28.5, "x": 13, "z": 3, "w": 5.6, "group": "A" },
+        { "y": 31, "x": 14, "z": 4, "w": 6.8, "group": "A" },
+        { "y": 33.5, "x": 15, "z": 5, "w": 8, "group": "A" },
+        { "y": 34.5, "x": 16, "z": 1, "w": 4.2, "group": "B" },
+        { "y": 37, "x": 17, "z": 2, "w": 5.4, "group": "B" },
+        { "y": 39.5, "x": 18, "z": 3, "w": 6.6, "group": "B" },
+        { "y": 42, "x": 19, "z": 4, "w": 7.8, "group": "B" },
+        { "y": 44.5, "x": 20, "z": 5, "w": 9, "group": "B" },
+        { "y": 44.5, "x": 21, "z": 1, "w": 5.2, "group": "B" },
+        { "y": 47, "x": 22, "z": 2, "w": 6.4, "group": "B" },
+        { "y": 49.5, "x": 23, "z": 3, "w": 7.6, "group": "B" },
+        { "y": 52, "x": 24, "z": 4, "w": 8.8, "group": "B" },
+        { "y": 54.5, "x": 25, "z": 5, "w": 10, "group": "B" },
+        { "y": 54.5, "x": 26, "z": 1, "w": 6.2, "group": "B" },
+        { "y": 57, "x": 27, "z": 2, "w": 7.4, "group": "B" },
+        { "y": 59.5, "x": 28, "z": 3, "w": 8.6, "group": "B" },
+        { "y": 62, "x": 29, "z": 4, "w": 9.8, "group": "B" },
+        { "y": 64.5, "x": 30, "z": 5, "w": 11, "group": "B" }
+      ],
+      "config": { "target": "", "features": ["x", "z", "w"], "params": { "features": ["x", "z", "w"] } },
+      "expected": {
+        "summary": {
+          "variables": { "equals": 3 },
+          "max VIF": { "greaterThanOrEqual": 1 }
+        },
+        "tables": { "vif": { "rowCount": 3, "finiteColumns": ["vif", "tolerance", "rSquared"] } }
+      }
+    },
+    {
+      "id": "partial-correlation-with-control",
+      "pluginId": "partial-correlation",
+      "description": "Partial correlation of x and y after controlling z.",
+      "useRowsFrom": "vif-regression-diagnostics",
+      "config": { "target": "", "features": ["x", "y"], "params": { "x": "x", "y": "y", "controls": ["z"] } },
+      "expected": {
+        "summary": {
+          "Number of obs": { "equals": 30 },
+          "partial r": { "greaterThan": 0.95 }
+        },
+        "tables": {
+          "partial-correlation": {
+            "rowCount": 1,
+            "rows": [{ "match": { "x": "x", "y": "y" }, "values": { "controls": { "equals": "z" } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "hierarchical-regression-blocks",
+      "pluginId": "hierarchical-regression",
+      "description": "Control block followed by a core predictor block.",
+      "useRowsFrom": "vif-regression-diagnostics",
+      "config": { "target": "y", "features": ["x"], "params": { "target": "y", "controls": ["z"], "features": ["x"] } },
+      "expected": {
+        "summary": {
+          "Delta R-squared": { "greaterThan": 0.9 }
+        },
+        "tables": {
+          "model-comparison": { "rowCount": 2 },
+          "coefficients": {
+            "rows": [{ "match": { "term": "x" }, "values": { "coefficient": { "closeTo": 2.051428571428571, "precision": 10 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "grouped-regression-two-groups",
+      "pluginId": "grouped-regression",
+      "description": "Two group OLS fits using the same target and predictors.",
+      "useRowsFrom": "vif-regression-diagnostics",
+      "config": { "target": "y", "features": ["x", "z"], "params": { "target": "y", "features": ["x", "z"], "group": "group" } },
+      "expected": {
+        "summary": {
+          "estimated groups": { "equals": 2 }
+        },
+        "tables": {
+          "group-models": { "rowCount": 2 },
+          "group-coefficients": {
+            "rows": [{ "match": { "term": "x" }, "values": { "coefficient": { "greaterThan": 1 } } }]
+          }
+        }
+      }
+    },
+    {
+      "id": "stepwise-regression-forward-selection",
+      "pluginId": "stepwise-regression",
+      "description": "Forward stepwise selection with x as the first selected variable.",
+      "useRowsFrom": "vif-regression-diagnostics",
+      "config": { "target": "y", "features": ["x", "z", "w"], "params": { "target": "y", "features": ["x", "z", "w"], "entryThreshold": 0.05 } },
+      "expected": {
+        "summary": {
+          "selected variables": { "greaterThanOrEqual": 1 }
+        },
+        "tables": {
+          "steps": {
+            "rows": [{ "match": { "step": 1 }, "values": { "variable": { "equals": "x" } } }]
+          },
+          "coefficients": {
+            "rows": [{ "match": { "term": "x" }, "values": { "coefficient": { "greaterThan": 1 } } }]
+          }
+        },
+        "warningsInclude": ["逐步回归属于探索性筛选方法"]
+      }
+    }
+  ]
+}

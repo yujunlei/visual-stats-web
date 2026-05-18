@@ -4,6 +4,7 @@ import type { Row, TypeOverrides } from './types'
 import type { InferenceConfig, ModelConfig, ModelResult } from '../models/types'
 
 export type SnapshotViewFilter = 'recent' | 'pinned' | 'favorite' | 'all'
+export type SnapshotSaveMode = 'full' | 'result-only'
 
 export type SnapshotIndexEntry = {
   id: string
@@ -33,6 +34,8 @@ export type WorkbenchSnapshot = SnapshotIndexEntry & {
   modelName: string
   modelShortName?: string
   formula: string
+  saveMode: SnapshotSaveMode
+  hasRows: boolean
   rows: Row[]
   dataRoles: DataRoles
   typeOverrides: TypeOverrides
@@ -45,6 +48,13 @@ export type WorkbenchSnapshot = SnapshotIndexEntry & {
   note: string
   tags: string[]
   runSummary: SnapshotRunSummary | null
+}
+
+export type SnapshotStorageSummary = {
+  snapshotCount: number
+  estimatedBytes: number
+  maxSnapshots: number
+  maxEstimatedBytes: number
 }
 
 export type ProjectAssetCurrentState = {
@@ -133,6 +143,9 @@ export function buildSnapshotRunSummary(result: ModelResult | undefined, savedRe
 export function normalizeWorkbenchSnapshot(candidate: Partial<WorkbenchSnapshot>): WorkbenchSnapshot {
   const createdAt = candidate.createdAt ?? new Date(0).toISOString()
   const savedResultAt = candidate.savedResultAt
+  const saveMode = candidate.saveMode ?? (candidate.hasRows === false ? 'result-only' : 'full')
+  const rows = candidate.rows ?? []
+  const hasRows = candidate.hasRows ?? rows.length > 0
 
   return {
     id: candidate.id ?? createdAt,
@@ -146,7 +159,9 @@ export function normalizeWorkbenchSnapshot(candidate: Partial<WorkbenchSnapshot>
     modelName: candidate.modelName ?? '',
     modelShortName: candidate.modelShortName,
     formula: candidate.formula ?? '',
-    rows: candidate.rows ?? [],
+    saveMode,
+    hasRows,
+    rows,
     dataRoles: candidate.dataRoles ?? emptyDataRoles,
     typeOverrides: candidate.typeOverrides ?? {},
     prepConfig: candidate.prepConfig ?? { missingStrategy: 'drop', categoricalEncoding: 'one-hot' },

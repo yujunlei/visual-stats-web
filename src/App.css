@@ -1755,6 +1755,31 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
   white-space: nowrap;
 }
 
+.snapshot-save-mode {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.snapshot-save-mode span {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.snapshot-save-mode select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+  font-size: 11.5px;
+}
+
 .snapshot-toolbar--compact {
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
@@ -1763,13 +1788,37 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
 }
 
 .snapshot-toolbar--compact .snapshot-toolbar__actions {
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .snapshot-toolbar--compact .secondary-button {
   height: 28px;
   padding: 0 8px;
   font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.snapshot-toolbar--compact .snapshot-filter-tabs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+}
+
+.snapshot-toolbar--compact .snapshot-filter-tabs button {
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.snapshot-storage-summary {
+  display: block;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -1981,6 +2030,24 @@ select.type-select { height: 26px; padding: 0 4px; border-radius: 5px; font-size
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.guided-workflow__error {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px !important;
+  color: #9a2d20 !important;
+  font-weight: 650;
+}
+
+.guided-workflow__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px !important;
+  color: #14524e !important;
+  font-weight: 650;
 }
 
 .guided-workflow__actions {

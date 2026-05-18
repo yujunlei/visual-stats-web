@@ -14,6 +14,8 @@ const snapshot: WorkbenchSnapshot = {
   modelName: '线性回归',
   modelShortName: 'OLS',
   formula: 'y ~ x',
+  saveMode: 'full',
+  hasRows: true,
   rows: [{ y: 1, x: 2 }],
   dataRoles: { idFields: ['id'], timeField: 'year', groupFields: [] },
   typeOverrides: {},

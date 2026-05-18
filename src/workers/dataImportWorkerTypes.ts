@@ -9,6 +9,7 @@ export const dataImportLimits = {
 export type DataImportWorkerRequest = {
   taskId: string
   file: File
+  fileType: 'csv' | 'xlsx'
 }
 
 export type DataImportWorkerProgress = {

@@ -99,9 +99,59 @@ describe('custom publication builder', () => {
     expect(table.title).toBe('Custom Table')
     expect(table.columns).toEqual([{ id: 'current', label: '(A)', group: 'Baseline' }])
     expect(table.rows.some((row) => row.role === 'coefficient' && row.label === 'x')).toBe(true)
-    expect(table.rows.some((row) => row.role === 'coefficient' && row.label === '_cons')).toBe(false)
+    expect(table.rows.some((row) => row.role === 'coefficient' && row.label === 'Cons')).toBe(false)
     expect(table.rows.some((row) => row.role === 'metric' && row.label === 'N')).toBe(true)
     expect(table.rows.some((row) => row.role === 'metric' && row.label === 'Adj-R²')).toBe(false)
+  })
+
+  it('does not auto-fill coefficient rows when every variable is hidden', () => {
+    const table = buildCustomPublicationTableFromConfig({
+      config: {
+        ...defaultCustomPublicationConfig(),
+        mode: 'custom' as const,
+      },
+      isDefaultTableMode: false,
+      baselineTable: null,
+      selectedSources: [source],
+      orderedVariableOptions: [
+        { id: 'x', label: 'X' },
+        { id: '_cons', label: 'Cons' },
+      ],
+      statisticOptions: [
+        { id: 'n', label: 'N', detail: '样本量' },
+      ],
+      hiddenVariableIds: new Set(['x', '_cons']),
+      disabledStatisticIds: new Set(),
+    })
+
+    expect(table).not.toBeNull()
+    if (!table) return
+    expect(table.rows.some((row) => row.role === 'coefficient')).toBe(false)
+    expect(table.rows.some((row) => row.role === 'statistic')).toBe(false)
+    expect(table.rows.some((row) => row.role === 'metric' && row.label === 'N')).toBe(true)
+  })
+
+  it('does not auto-fill hidden coefficient terms when only one variable is visible', () => {
+    const table = buildCustomPublicationTableFromConfig({
+      config: {
+        ...defaultCustomPublicationConfig(),
+        mode: 'custom' as const,
+      },
+      isDefaultTableMode: false,
+      baselineTable: null,
+      selectedSources: [source],
+      orderedVariableOptions: [
+        { id: 'x', label: 'X' },
+        { id: '_cons', label: 'Cons' },
+      ],
+      statisticOptions: [],
+      hiddenVariableIds: new Set(['_cons']),
+      disabledStatisticIds: new Set(),
+    })
+
+    expect(table).not.toBeNull()
+    if (!table) return
+    expect(table.rows.filter((row) => row.role === 'coefficient').map((row) => row.label)).toEqual(['x'])
   })
 
   it('keeps custom statistic rows in the UI order', () => {

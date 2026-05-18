@@ -30,6 +30,7 @@ import {
   snapshotFilterOptions,
 } from './data/snapshots'
 import { isMissingCell } from './data/missingValues'
+import { getModelTestDataset } from './data/modelTestDatasets'
 import { buildPublicationTableHtml, publicationSheetData, publicationTableCss } from './export/publicationRenderers'
 import { publicationTableToRows } from './export/publicationTables'
 import { buildCsvReport, buildExcelBlob, buildHtmlReport, buildJsonReport, csvLine } from './export/reportExport'
@@ -236,12 +237,14 @@ function App() {
   const setPendingImport = actions.data.setPendingImport
   const setDataFieldRole = actions.data.setDataFieldRole
   const handleUpload = actions.data.handleUpload
+  const handleTestDataUpload = actions.data.handleTestDataUpload
   const updateColumnType = actions.data.updateColumnType
   const togglePendingRoleField = actions.data.togglePendingRoleField
   const setPendingTimeField = actions.data.setPendingTimeField
   const continueImportAfterMissingAlert = actions.data.continueImportAfterMissingAlert
   const cancelMissingValueImport = actions.data.cancelMissingValueImport
   const confirmImport = actions.data.confirmImport
+  const activeModelTestDataset = useMemo(() => getModelTestDataset(activeModelId), [activeModelId])
 
   const setInferenceConfig = actions.model.setInferenceConfig
   const setModelConfig = actions.model.setModelConfig
@@ -1131,6 +1134,18 @@ function App() {
             <span className="panel__label">Step 2</span>
             <h3>上传 CSV 或 XLSX 数据</h3>
             <p>{hasDataset ? `已导入 ${fileName || '当前数据'}，共 ${rows.length} 行。可以重新上传，或继续设置 ID 字段。` : '导入数据后，系统会打开字段角色确认面板。'}</p>
+            {importStatus ? (
+              <p className="guided-workflow__status">
+                <Upload size={14} />
+                {importStatus}
+              </p>
+            ) : null}
+            {uploadError ? (
+              <p className="guided-workflow__error">
+                <AlertTriangle size={14} />
+                {uploadError}
+              </p>
+            ) : null}
           </div>
           <div className="guided-workflow__actions">
             <label className="primary-button import-cta">
@@ -1146,6 +1161,16 @@ function App() {
                 }}
               />
             </label>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!canImportData || Boolean(importStatus) || !activeModelTestDataset}
+              title={activeModelTestDataset ? `加载${activeModelTestDataset.label}` : '当前模型暂无测试数据'}
+              onClick={() => handleTestDataUpload(activeModelTestDataset)}
+            >
+              <Database size={15} />
+              {activeModelTestDataset ? '使用测试数据' : '暂无测试数据'}
+            </button>
             {hasDataset ? (
               <button className="secondary-button" type="button" onClick={() => setWorkflowStep('roles')}>
                 继续设置 ID / 分组
@@ -1570,7 +1595,7 @@ function App() {
                 </button>
                 <button className="secondary-button is-subtle" type="button" onClick={saveSnapshot} disabled={!hasDataset}>
                   <Save size={14} />
-                  保存快照
+                  保存数据
                 </button>
               </div>
             </div>
@@ -1578,11 +1603,11 @@ function App() {
             {snapshots.length > 0 ? (
               <div className="snapshot-toolbar snapshot-toolbar--compact">
                 <div className="snapshot-toolbar__summary">
-                  <span>历史快照</span>
+                  <span>历史数据</span>
                   <strong>{snapshotSummaryText}</strong>
                 </div>
                 <div className="snapshot-toolbar__actions">
-                  <div className="snapshot-filter-tabs" aria-label="历史快照筛选">
+                  <div className="snapshot-filter-tabs" aria-label="历史数据筛选">
                     {snapshotFilterOptions.map((option) => (
                       <button
                         className={snapshotViewFilter === option.id ? 'is-active' : ''}
@@ -1652,7 +1677,7 @@ function App() {
             ) : visibleSnapshots.length === 0 ? (
               <div className="empty-history">
                 <History size={17} />
-                当前筛选下没有快照。
+                当前筛选下没有历史数据。
               </div>
             ) : (
               visibleSnapshots.map((snapshot) => (
@@ -1666,7 +1691,7 @@ function App() {
                     <div className="snapshot-rename">
                       <input
                         value={snapshotNameDraft}
-                        aria-label="快照名称"
+                        aria-label="历史数据名称"
                         onChange={(event) => setSnapshotNameDraft(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') commitRenameSnapshot(snapshot.id)
@@ -1683,7 +1708,7 @@ function App() {
                   ) : (
                     <div className="snapshot-item__header">
                       {isSnapshotManageMode ? (
-                        <label className="snapshot-select" title="选择快照">
+                        <label className="snapshot-select" title="选择历史数据">
                           <input
                             type="checkbox"
                             checked={selectedSnapshotIdSet.has(snapshot.id)}
@@ -1760,7 +1785,7 @@ function App() {
                       />
                       <textarea
                         value={snapshot.note}
-                        placeholder="快照备注"
+                        placeholder="历史数据备注"
                         rows={2}
                         onChange={(event) => updateSnapshotNote(snapshot.id, event.target.value)}
                       />
@@ -1873,7 +1898,7 @@ function App() {
 
               {workspaceMode !== 'result' ? renderWorkflowGuidance() : null}
 
-              {result || isModelRunning || uploadError ? (
+              {result || isModelRunning ? (
               <section className="results-workspace">
                 <div className="result-panel result-primary-panel">
                   <div className="result-primary-header">
@@ -1903,7 +1928,7 @@ function App() {
                     mainResultTable={mainResultTable}
                     secondaryResultTables={secondaryResultTables}
                     runTask={runTask}
-                    error={uploadError}
+                    error={modelError}
                   />
                 </div>
               </section>

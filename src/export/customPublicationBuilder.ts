@@ -44,7 +44,7 @@ export function buildCustomPublicationTableFromConfig({
     title: config.title,
     note: config.note,
     sources,
-    variableOrder: orderedVariableOptions.filter((option) => !hiddenVariableIds.has(option.id)).map((option) => option.id),
+    visibleVariableIds: orderedVariableOptions.filter((option) => !hiddenVariableIds.has(option.id)).map((option) => option.id),
     enabledStatisticIds: statisticOptions.filter((option) => !disabledStatisticIds.has(option.id)).map((option) => option.id),
     variableLabels: config.variableLabels,
     statisticLabels: config.statisticLabels,

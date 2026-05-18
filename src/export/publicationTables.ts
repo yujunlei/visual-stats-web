@@ -69,6 +69,7 @@ export type CustomPublicationInput = {
   sources: CustomPublicationSource[]
   note: string
   variableOrder?: string[]
+  visibleVariableIds?: string[]
   enabledStatisticIds?: string[]
   variableLabels?: Record<string, string>
   statisticLabels?: Record<string, string>
@@ -226,6 +227,7 @@ export const buildCustomPublicationTable = ({
   sources,
   note,
   variableOrder = [],
+  visibleVariableIds,
   enabledStatisticIds = [],
   variableLabels = {},
   statisticLabels = {},
@@ -268,10 +270,13 @@ export const buildCustomPublicationTable = ({
       ...coefficientMaps.flatMap((map) => Array.from(map.keys()).filter(Boolean)),
     ]),
   )
-  const orderedTerms = [
-    ...variableOrder.filter((term) => availableTerms.includes(term)),
-    ...availableTerms.filter((term) => !variableOrder.includes(term)),
-  ]
+  const orderedTerms =
+    visibleVariableIds === undefined
+      ? [
+          ...variableOrder.filter((term) => availableTerms.includes(term)),
+          ...availableTerms.filter((term) => !variableOrder.includes(term)),
+        ]
+      : Array.from(new Set(visibleVariableIds)).filter((term) => availableTerms.includes(term))
 
   const rowForTerm = (term: string) => {
     const label = variableLabels[term]?.trim() || (term === '_cons' ? 'Cons' : term)

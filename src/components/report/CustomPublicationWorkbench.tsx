@@ -221,14 +221,14 @@ export function CustomPublicationWorkbench({
                 <div className="report-editor-section__header">
                   <div>
                     <strong>模型比较</strong>
-                    <span>从当前结果和历史快照中选择多个结果，生成横向比较表，也可以一键送入自定义论文表。</span>
+                    <span>从当前结果和历史数据中选择多个结果，生成横向比较表，也可以一键送入自定义论文表。</span>
                   </div>
                   <button className="secondary-button" type="button" onClick={onSendComparisonToCustom} disabled={isExporting || !comparisonTable}>
                     送入自定义表
                   </button>
                 </div>
                 {comparisonSources.length === 0 ? (
-                  <div className="empty-history">暂无可比较结果。运行模型或保存带结果的快照后会出现在这里。</div>
+                  <div className="empty-history">暂无可比较结果。运行模型或保存带结果的历史数据后会出现在这里。</div>
                 ) : (
                   <>
                     <div className="model-comparison-source-list">

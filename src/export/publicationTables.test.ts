@@ -92,4 +92,48 @@ describe('publication tables', () => {
     expect(table?.rows.find((row) => row.label === 'N')?.values).toEqual(['100'])
     expect(table?.rows.find((row) => row.label === 'Adj-R²')?.values).toEqual(['0.321000'])
   })
+
+  it('does not append coefficient terms when visible variables are explicitly empty', () => {
+    const table = buildCustomPublicationTable({
+      title: '自定义论文表',
+      note: '',
+      sources: [
+        {
+          id: 'current',
+          result,
+          config: { target: 'y', features: ['x'] },
+          dimensions: { idFields: [], timeField: '', groupFields: [] },
+          label: '(1)',
+          modelShortName: 'OLS',
+        },
+      ],
+      visibleVariableIds: [],
+      enabledStatisticIds: ['n'],
+    })
+
+    expect(table?.rows.some((row) => row.role === 'coefficient')).toBe(false)
+    expect(table?.rows.some((row) => row.role === 'statistic')).toBe(false)
+    expect(table?.rows.find((row) => row.label === 'N')?.values).toEqual(['100'])
+  })
+
+  it('keeps legacy auto-derived coefficient terms when visible variables are not provided', () => {
+    const table = buildCustomPublicationTable({
+      title: '自定义论文表',
+      note: '',
+      sources: [
+        {
+          id: 'current',
+          result,
+          config: { target: 'y', features: ['x'] },
+          dimensions: { idFields: [], timeField: '', groupFields: [] },
+          label: '(1)',
+          modelShortName: 'OLS',
+        },
+      ],
+      variableOrder: [],
+      enabledStatisticIds: [],
+    })
+
+    expect(table?.rows.filter((row) => row.role === 'coefficient').map((row) => row.label)).toEqual(['x', 'Cons'])
+  })
 })

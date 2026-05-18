@@ -3,12 +3,12 @@ import type { ModelCatalogEntry, ModelPackId, ModelTaskGroup } from './types'
 export const modelPacks: Record<ModelPackId, { label: string; description: string; enabledByDefault: boolean }> = {
   core: {
     label: '核心模型包',
-    description: '通用统计、差异检验、相关关系和基础回归。',
+    description: '通用统计、问卷基础、差异检验、相关关系和基础回归。',
     enabledByDefault: true,
   },
   advanced: {
     label: '进阶模型包',
-    description: '面板固定效应、高维固定效应和机制检验。',
+    description: '回归诊断、面板固定效应、高维固定效应和机制检验。',
     enabledByDefault: true,
   },
   experimental: {
@@ -18,9 +18,21 @@ export const modelPacks: Record<ModelPackId, { label: string; description: strin
   },
 }
 
-export const modelTaskGroupOrder: ModelTaskGroup[] = ['数据探索', '差异检验', '相关关系', '回归建模', '面板与固定效应', '机制检验', '空间与扩展模型']
+export const modelTaskGroupOrder: ModelTaskGroup[] = [
+  '数据探索',
+  '问卷研究',
+  '差异检验',
+  '相关关系',
+  '回归建模',
+  '回归诊断',
+  '面板与固定效应',
+  '机制检验',
+  '空间与扩展模型',
+]
 
 const coreAccuracy = '浏览器内 TypeScript 实现，适合常规探索分析；核心数值结果由自动回归测试覆盖。'
+const surveyAccuracy = '浏览器内 TypeScript 规则计算，适合问卷基础分析；核心统计量由固定样本测试覆盖。'
+const regressionDiagnosticsAccuracy = '浏览器内 TypeScript OLS 派生实现，复用基础回归估计与自动测试 fixture。'
 const fixedEffectsAccuracy = '浏览器内 TypeScript 固定效应实现；在已覆盖 Stata/reghdfe golden fixture 范围内按逐项一致目标维护。'
 const previewAccuracy = '浏览器内轻量实现，适合探索和方案设计；正式论文建议用 Stata/R/Python 复核。'
 const experimentalAccuracy = '实验性浏览器实现，默认显示但保留实验标记；结果仅适合方法预览，不应直接作为论文结论。'
@@ -77,6 +89,56 @@ export const modelCatalog: ModelCatalogEntry[] = [
     enabledByDefault: true,
     useCase: '判断数值变量是否明显偏离正态分布。',
     accuracyNotes: coreAccuracy,
+  },
+  {
+    id: 'reliability-analysis',
+    taskGroup: '问卷研究',
+    packId: 'core',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '计算量表 Cronbach alpha、CITC 和删除题项后的 alpha。',
+    accuracyNotes: surveyAccuracy,
+  },
+  {
+    id: 'item-analysis',
+    taskGroup: '问卷研究',
+    packId: 'core',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '按总分高低组检验题项区分度和项目-总分相关。',
+    accuracyNotes: surveyAccuracy,
+  },
+  {
+    id: 'multiple-response-analysis',
+    taskGroup: '问卷研究',
+    packId: 'core',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '统计多选题选项的选择次数、响应占比和个案占比。',
+    accuracyNotes: surveyAccuracy,
+  },
+  {
+    id: 'nps-analysis',
+    taskGroup: '问卷研究',
+    packId: 'core',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '按推荐意愿评分计算推荐者、被动者、贬损者和 NPS。',
+    accuracyNotes: surveyAccuracy,
+  },
+  {
+    id: 'content-validity',
+    taskGroup: '问卷研究',
+    packId: 'core',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '按专家评分计算 I-CVI、S-CVI/Ave 和 S-CVI/UA。',
+    accuracyNotes: surveyAccuracy,
   },
   {
     id: 'independent-t-test',
@@ -167,6 +229,56 @@ export const modelCatalog: ModelCatalogEntry[] = [
     enabledByDefault: true,
     useCase: '估计二分类结果发生概率及 Odds Ratio。',
     accuracyNotes: coreAccuracy,
+  },
+  {
+    id: 'vif-analysis',
+    taskGroup: '回归诊断',
+    packId: 'advanced',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '诊断解释变量之间的多重共线性风险。',
+    accuracyNotes: regressionDiagnosticsAccuracy,
+  },
+  {
+    id: 'partial-correlation',
+    taskGroup: '回归诊断',
+    packId: 'advanced',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '控制一组变量后估计两个变量的相关关系。',
+    accuracyNotes: regressionDiagnosticsAccuracy,
+  },
+  {
+    id: 'hierarchical-regression',
+    taskGroup: '回归诊断',
+    packId: 'advanced',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '比较分层加入变量前后的解释力增量。',
+    accuracyNotes: regressionDiagnosticsAccuracy,
+  },
+  {
+    id: 'grouped-regression',
+    taskGroup: '回归诊断',
+    packId: 'advanced',
+    modelVersion: '1.0.0',
+    maturityLevel: 'stable',
+    enabledByDefault: true,
+    useCase: '按分组变量分别估计回归，用于探索异质性。',
+    accuracyNotes: regressionDiagnosticsAccuracy,
+  },
+  {
+    id: 'stepwise-regression',
+    taskGroup: '回归诊断',
+    packId: 'advanced',
+    modelVersion: '0.8.0',
+    maturityLevel: 'preview',
+    enabledByDefault: true,
+    useCase: '按候选变量显著性做探索性前向筛选。',
+    accuracyNotes: previewAccuracy,
   },
   {
     id: 'xtreg-fixed-effects',

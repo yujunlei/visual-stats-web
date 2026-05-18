@@ -7,8 +7,10 @@ import { mediationAnalysisPlugin } from './plugins/mediationAnalysis'
 import { moderatedMediationPlugin } from './plugins/moderatedMediation'
 import { moderationAnalysisPlugin } from './plugins/moderationAnalysis'
 import { ordinaryRegressionPlugin } from './plugins/ordinaryRegression'
+import { regressionDiagnosticsPlugins } from './plugins/regressionDiagnostics'
 import { reghdfeRegressionPlugin } from './plugins/reghdfeRegression'
 import { spatialModelPlugins } from './plugins/spatialRegression'
+import { surveyResearchPlugins } from './plugins/surveyResearch'
 import { thresholdRegressionPlugin } from './plugins/thresholdRegression'
 import { xtregFixedEffectsPlugin } from './plugins/xtregFixedEffects'
 import { modelCatalog, modelCatalogById, modelPacks, modelTaskGroupOrder } from './catalog'
@@ -18,8 +20,10 @@ export { modelCatalog, modelPacks, modelTaskGroupOrder }
 
 export const allModelPlugins = [
   ...commonMethodPlugins,
+  ...surveyResearchPlugins,
   linearRegressionPlugin,
   ordinaryRegressionPlugin,
+  ...regressionDiagnosticsPlugins,
   xtregFixedEffectsPlugin,
   reghdfeRegressionPlugin,
   mediationAnalysisPlugin,

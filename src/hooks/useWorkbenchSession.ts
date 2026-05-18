@@ -930,13 +930,15 @@ export function useWorkbenchSession({
         setUploadError('仅支持 CSV 或 XLSX 文件。')
         return
       }
+      const fileType: 'csv' | 'xlsx' = extension
 
       const taskId = `${Date.now()}-${file.name}`
       const startedAt = performance.now()
-      const worker = new Worker(new URL('../workers/dataImportWorker.ts', import.meta.url), { type: 'module' })
       setUploadError('')
       setImportStatus('正在解析数据文件。')
       recordPerformanceEvent('import.started', undefined, { fileName: file.name, fileSize: file.size })
+
+      const worker = new Worker(new URL('../workers/dataImportWorker.ts', import.meta.url), { type: 'module' })
       worker.onmessage = (event: MessageEvent<DataImportWorkerMessage>) => {
         const message = event.data
         if (message.taskId !== taskId) return
@@ -959,12 +961,34 @@ export function useWorkbenchSession({
       worker.onerror = () => {
         setImportStatus('')
         recordPerformanceEvent('import.failed', performance.now() - startedAt, { fileName: file.name })
-        setUploadError(extension === 'xlsx' ? 'XLSX 解析失败，请确认第一张工作表是标准二维表。' : 'CSV 解析失败，请检查文件格式。')
+        setUploadError(fileType === 'xlsx' ? 'XLSX 解析失败，请确认第一张工作表是标准二维表。' : 'CSV 解析失败，请检查文件格式。')
         worker.terminate()
       }
-      worker.postMessage({ taskId, file })
+      worker.postMessage({ taskId, file, fileType })
     },
     [hasActiveModel, openImportWizard],
+  )
+
+  const handleTestDataUpload = useCallback(
+    async (dataset: { fileName: string; url: string } | null | undefined) => {
+      if (!dataset || !canImportData || importStatus) return
+
+      try {
+        setUploadError('')
+        setImportStatus('正在读取测试数据。')
+        const response = await fetch(dataset.url)
+        if (!response.ok) {
+          throw new Error(`Failed to load test data: ${response.status}`)
+        }
+        const blob = await response.blob()
+        setImportStatus('')
+        await handleUpload(new File([blob], dataset.fileName, { type: 'text/csv' }))
+      } catch {
+        setImportStatus('')
+        setUploadError('测试数据加载失败，请检查本地测试文件。')
+      }
+    },
+    [canImportData, handleUpload, importStatus],
   )
 
   const setTarget = useCallback((target: string) => {
@@ -1219,6 +1243,7 @@ export function useWorkbenchSession({
         setPendingTimeField,
         setDataFieldRole,
         handleUpload,
+        handleTestDataUpload,
         updateColumnType,
       },
       model: {

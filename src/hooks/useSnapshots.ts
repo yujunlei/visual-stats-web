@@ -10,13 +10,21 @@ import {
   normalizeWorkbenchSnapshots,
   sortSnapshots,
   type SnapshotViewFilter,
+  type SnapshotSaveMode,
   type WorkbenchSnapshot,
 } from '../data/snapshots'
 import type { InferenceConfig, ModelConfig, ModelPlugin, ModelResult } from '../models/types'
 import { snapshotStorageKey } from '../constants/workbench'
-import { clearLegacySnapshotStorage, loadSnapshotsFromIndexedDb, persistSnapshotsToIndexedDb } from '../data/snapshotStore'
+import {
+  clearLegacySnapshotStorage,
+  defaultSnapshotStorageLimits,
+  enforceSnapshotCapacity,
+  loadSnapshotsFromIndexedDb,
+  persistSnapshotsToIndexedDb,
+  summarizeSnapshotStorage,
+} from '../data/snapshotStore'
 
-export type { WorkbenchSnapshot } from '../data/snapshots'
+export type { SnapshotSaveMode, WorkbenchSnapshot } from '../data/snapshots'
 
 export type SnapshotDraftInput = {
   activeModel: ModelPlugin
@@ -30,6 +38,7 @@ export type SnapshotDraftInput = {
   modelConfig: ModelConfig
   result: ModelResult | null
   resultLogs: RunLogEntry[]
+  saveMode?: SnapshotSaveMode
 }
 
 export const loadSnapshots = () => {
@@ -42,6 +51,9 @@ export const loadSnapshots = () => {
 }
 
 export function createWorkbenchSnapshot(input: SnapshotDraftInput, now = new Date().toISOString()): WorkbenchSnapshot {
+  const saveMode = input.saveMode ?? 'full'
+  const hasRows = saveMode === 'full'
+
   return {
     id: `${Date.now()}`,
     createdAt: now,
@@ -54,7 +66,9 @@ export function createWorkbenchSnapshot(input: SnapshotDraftInput, now = new Dat
     modelName: input.activeModel.name,
     modelShortName: input.activeModel.shortName || input.activeModel.name,
     formula: input.activeModel.getFormula(input.modelConfig),
-    rows: input.rows,
+    saveMode,
+    hasRows,
+    rows: hasRows ? input.rows : [],
     dataRoles: input.dataRoles,
     typeOverrides: input.typeOverrides,
     prepConfig: input.prepConfig,
@@ -76,13 +90,15 @@ type UseSnapshotsOptions = {
   onRestoreSnapshot: (snapshot: WorkbenchSnapshot) => void
   confirmDelete?: (message: string) => boolean
   maxSnapshots?: number
+  maxEstimatedBytes?: number
 }
 
 export function useSnapshots({
   onPersistError,
   onRestoreSnapshot,
   confirmDelete = (message) => window.confirm(message),
-  maxSnapshots = 30,
+  maxSnapshots = defaultSnapshotStorageLimits.maxSnapshots,
+  maxEstimatedBytes = defaultSnapshotStorageLimits.maxEstimatedBytes,
 }: UseSnapshotsOptions) {
   const [snapshotViewFilter, setSnapshotViewFilter] = useState<SnapshotViewFilter>('recent')
   const [snapshots, setSnapshots] = useState<WorkbenchSnapshot[]>(loadSnapshots)
@@ -123,19 +139,28 @@ export function useSnapshots({
   const selectedSnapshotsAllPinned = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.pinned)
   const selectedSnapshotsAllFavorite = selectedSnapshots.length > 0 && selectedSnapshots.every((snapshot) => snapshot.favorite)
   const snapshotSummaryText = getSnapshotSummaryText(sortedSnapshots.length, filteredSnapshots.length, snapshotViewFilter)
+  const snapshotStorageSummary = useMemo(
+    () => summarizeSnapshotStorage(snapshots, { maxSnapshots, maxEstimatedBytes }),
+    [maxEstimatedBytes, maxSnapshots, snapshots],
+  )
 
   const persistSnapshots = (nextSnapshots: WorkbenchSnapshot[]) => {
-    setSnapshots(nextSnapshots)
-    persistSnapshotsToIndexedDb(nextSnapshots)
+    const prunedSnapshots = enforceSnapshotCapacity(nextSnapshots, { maxSnapshots, maxEstimatedBytes })
+    setSnapshots(prunedSnapshots)
+    persistSnapshotsToIndexedDb(prunedSnapshots)
       .then(clearLegacySnapshotStorage)
       .catch(() => {
-        onPersistError('快照保存失败：浏览器 IndexedDB 存储不可用或空间不足。')
+        onPersistError('历史数据保存失败：浏览器 IndexedDB 存储不可用或空间不足。')
       })
   }
 
   const saveSnapshot = (input: SnapshotDraftInput) => {
     const snapshot = createWorkbenchSnapshot(input)
-    persistSnapshots([snapshot, ...snapshots].slice(0, maxSnapshots))
+    persistSnapshots([snapshot, ...snapshots])
+  }
+
+  const cleanupSnapshots = () => {
+    persistSnapshots(snapshots)
   }
 
   const restoreSnapshot = (snapshot: WorkbenchSnapshot) => {
@@ -228,7 +253,7 @@ export function useSnapshots({
 
   const deleteSelectedSnapshots = () => {
     if (selectedSnapshotIds.length === 0) return
-    const confirmed = confirmDelete(`确定删除选中的 ${selectedSnapshotIds.length} 条快照吗？`)
+    const confirmed = confirmDelete(`确定删除选中的 ${selectedSnapshotIds.length} 条历史数据吗？`)
     if (!confirmed) return
 
     persistSnapshots(snapshots.filter((snapshot) => !selectedSnapshotIdSet.has(snapshot.id)))
@@ -237,7 +262,7 @@ export function useSnapshots({
   }
 
   const deleteSnapshot = (snapshot: WorkbenchSnapshot) => {
-    const confirmed = confirmDelete(`确定删除快照“${snapshot.label}”吗？此操作只会删除这条本地历史记录。`)
+    const confirmed = confirmDelete(`确定删除历史数据“${snapshot.label}”吗？此操作只会删除这条本地历史记录。`)
     if (!confirmed) return
 
     persistSnapshots(snapshots.filter((entry) => entry.id !== snapshot.id))
@@ -267,7 +292,9 @@ export function useSnapshots({
     selectedSnapshotsAllPinned,
     selectedSnapshotsAllFavorite,
     snapshotSummaryText,
+    snapshotStorageSummary,
     saveSnapshot,
+    cleanupSnapshots,
     restoreSnapshot,
     startRenameSnapshot,
     cancelRenameSnapshot,

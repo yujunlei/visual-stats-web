@@ -1,7 +1,7 @@
 import Papa from 'papaparse'
-import { readSheet } from 'read-excel-file/browser'
-import { rowsFromSheet } from '../data/tableUtils'
+import { readSheet } from 'read-excel-file/web-worker'
 import type { Row } from '../data/types'
+import { rowsFromSheet } from '../data/tableUtils'
 import { dataImportLimits, type DataImportWorkerMessage, type DataImportWorkerRequest } from './dataImportWorkerTypes'
 
 const postMessageToMain = (message: DataImportWorkerMessage) => {
@@ -11,10 +11,21 @@ const postMessageToMain = (message: DataImportWorkerMessage) => {
 const rowLimitError = () => `数据行数过多：当前限制为 ${dataImportLimits.maxRows.toLocaleString('zh-CN')} 行。`
 const columnLimitError = () => `字段数过多：当前限制为 ${dataImportLimits.maxColumns.toLocaleString('zh-CN')} 个字段。`
 
-const validateParsedRows = (rows: Row[]) => {
-  if (rows.length > dataImportLimits.maxRows) throw new Error(rowLimitError())
-  const columnCount = Object.keys(rows[0] ?? {}).length
-  if (columnCount > dataImportLimits.maxColumns) throw new Error(columnLimitError())
+const getMaxSheetColumnCount = (sheetRows: unknown[][]) => {
+  let maxColumns = 0
+  for (const row of sheetRows) {
+    if (row.length > maxColumns) maxColumns = row.length
+  }
+  return maxColumns
+}
+
+const getMaxRowColumnCount = (rows: Row[]) => {
+  let maxColumns = 0
+  for (const row of rows) {
+    const columnCount = Object.keys(row).length
+    if (columnCount > maxColumns) maxColumns = columnCount
+  }
+  return maxColumns
 }
 
 const parseCsv = (taskId: string, file: File) =>
@@ -54,24 +65,33 @@ const parseCsv = (taskId: string, file: File) =>
   })
 
 const parseXlsx = async (taskId: string, file: File) => {
-  postMessageToMain({ type: 'progress', taskId, phase: '正在读取 XLSX 工作表。', progress: 30 })
+  postMessageToMain({ type: 'progress', taskId, phase: '正在读取 XLSX 工作表。', progress: 20 })
   const sheetRows = await readSheet(file)
-  if (sheetRows.length > dataImportLimits.maxRows + 1) throw new Error(rowLimitError())
-  if ((sheetRows[0]?.length ?? 0) > dataImportLimits.maxColumns) throw new Error(columnLimitError())
+  if (sheetRows.length > dataImportLimits.maxRows + 1) {
+    throw new Error(rowLimitError())
+  }
+  if (getMaxSheetColumnCount(sheetRows) > dataImportLimits.maxColumns) {
+    throw new Error(columnLimitError())
+  }
+
   postMessageToMain({ type: 'progress', taskId, phase: '正在转换 XLSX 行数据。', progress: 75 })
   const rows = rowsFromSheet(sheetRows)
-  validateParsedRows(rows)
+  if (rows.length > dataImportLimits.maxRows) {
+    throw new Error(rowLimitError())
+  }
+  if (getMaxRowColumnCount(rows) > dataImportLimits.maxColumns) {
+    throw new Error(columnLimitError())
+  }
   return rows
 }
 
 self.onmessage = async (event: MessageEvent<DataImportWorkerRequest>) => {
-  const { taskId, file } = event.data
-  const extension = file.name.split('.').pop()?.toLowerCase()
+  const { taskId, file, fileType } = event.data
   try {
-    const rows = extension === 'xlsx' ? await parseXlsx(taskId, file) : await parseCsv(taskId, file)
+    const rows = fileType === 'xlsx' ? await parseXlsx(taskId, file) : await parseCsv(taskId, file)
     postMessageToMain({ type: 'success', taskId, rows })
   } catch (error) {
-    const fallback = extension === 'xlsx' ? 'XLSX 解析失败，请确认第一张工作表是标准二维表。' : 'CSV 解析失败，请检查文件格式。'
+    const fallback = fileType === 'xlsx' ? 'XLSX 解析失败，请确认第一张工作表是标准二维表。' : 'CSV 解析失败，请检查文件格式。'
     postMessageToMain({ type: 'error', taskId, error: error instanceof Error && error.message ? error.message : fallback })
   }
 }

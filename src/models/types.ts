@@ -120,9 +120,11 @@ export type ModelPackId = 'core' | 'advanced' | 'experimental'
 
 export type ModelTaskGroup =
   | '数据探索'
+  | '问卷研究'
   | '差异检验'
   | '相关关系'
   | '回归建模'
+  | '回归诊断'
   | '面板与固定效应'
   | '机制检验'
   | '空间与扩展模型'
